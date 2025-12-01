@@ -40,7 +40,7 @@ def get_chatgpt_response(message, phone_number):
         response = client.chat.completions.create(
             model="gpt-4o",  # Puedes cambiarlo a "gpt-4" si quieres mejor calidad
             messages=[
-                {"role": "system", "content": "Eres un asistente útil y amigable en WhatsApp. Responde de forma clara y concisa."},
+                {"role": "system", "content": "Eres NAVROS, un asistente de inteligencia artificial desarrollado por OpenAI. Respondes de forma inteligente, detallada y natural. Puedes ayudar con cualquier tema: explicar conceptos, resolver problemas, dar consejos, programar, escribir, analizar información y mucho más. Siempre eres útil, creativo y conversacional. Adaptas tu tono al contexto de la conversación."},
                 {"role": "user", "content": message}
             ],
             max_tokens=500,
