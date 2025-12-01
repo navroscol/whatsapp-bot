@@ -310,47 +310,54 @@ def webhook():
                 if caption:
                     text = caption
                 
-                # Evolution API puede devolver la imagen de varias formas
-                # Intentar obtener la URL de diferentes campos posibles
-                if image_msg.get('url'):
-                    image_url = image_msg.get('url')
-                elif image_msg.get('directPath'):
-                    # Construir URL completa desde directPath
-                    base_url = EVOLUTION_API_URL.replace('/v1', '')
-                    image_url = f"{base_url}{image_msg.get('directPath')}"
-                
-                # Si aún no tenemos URL, intentar descargar la imagen con Evolution API
-                if not image_url and message_data.get('key'):
-                    message_id = message_data.get('key', {}).get('id')
-                    if message_id:
-                        try:
-                            # Endpoint para obtener la imagen
-                            download_url = f"{EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/{INSTANCE_NAME}"
-                            download_data = {
-                                "message": message_data
-                            }
-                            download_headers = {
-                                'Content-Type': 'application/json',
-                                'apikey': EVOLUTION_API_KEY
-                            }
+                # Las URLs de WhatsApp no son accesibles directamente por OpenAI
+                # Necesitamos descargar la imagen usando Evolution API
+                try:
+                    print("Descargando imagen desde WhatsApp...")
+                    
+                    # Endpoint para obtener la imagen en base64
+                    download_url = f"{EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/{INSTANCE_NAME}"
+                    download_data = {
+                        "message": message_data
+                    }
+                    download_headers = {
+                        'Content-Type': 'application/json',
+                        'apikey': EVOLUTION_API_KEY
+                    }
+                    
+                    response = requests.post(download_url, json=download_data, headers=download_headers, timeout=30)
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        base64_data = result.get('base64')
+                        
+                        if base64_data:
+                            # Obtener el tipo MIME (por defecto jpeg)
+                            mime_type = image_msg.get('mimetype', 'image/jpeg')
                             
-                            response = requests.post(download_url, json=download_data, headers=download_headers)
-                            if response.status_code == 200:
-                                result = response.json()
-                                base64_data = result.get('base64')
-                                if base64_data:
-                                    # Convertir base64 a URL de datos
-                                    mime_type = image_msg.get('mimetype', 'image/jpeg')
-                                    image_url = f"data:{mime_type};base64,{base64_data}"
-                                    print(f"Imagen convertida a base64 data URL")
-                        except Exception as e:
-                            print(f"Error descargando imagen: {e}")
+                            # Convertir a URL de datos para OpenAI
+                            image_url = f"data:{mime_type};base64,{base64_data}"
+                            print(f"✅ Imagen descargada y convertida a base64 ({len(base64_data)} caracteres)")
+                        else:
+                            print("❌ No se obtuvo base64 de la imagen")
+                    else:
+                        print(f"❌ Error descargando imagen: {response.status_code} - {response.text}")
+                        
+                except Exception as e:
+                    print(f"❌ Error procesando imagen: {e}")
+                    import traceback
+                    traceback.print_exc()
                 
-                print(f"Imagen detectada - URL: {image_url}, Caption: {caption}")
+                print(f"Imagen procesada - Caption: {caption}, Base64: {'Sí' if image_url and 'base64' in image_url else 'No'}")
             
             # Procesar si hay contenido (texto o imagen)
             if (text or image_url) and phone_number:
                 print(f"Procesando mensaje de {phone_number}")
+                
+                # Si hay imagen pero no hay texto, usar un prompt por defecto
+                if image_url and not text:
+                    text = "¿Qué hay en esta imagen?"
+                    print("Imagen sin caption, usando prompt por defecto")
                 
                 # Verificar si es un usuario nuevo (primera interacción)
                 is_new_user = phone_number not in user_sessions
@@ -383,7 +390,7 @@ def webhook():
                     
                     # Enviar mensaje de error más específico
                     if image_url:
-                        error_msg = "Disculpa, tuve un problema procesando la imagen. ¿Podrías intentar enviarla de nuevo o describir qué necesitas?"
+                        error_msg = "Disculpa, tuve un problema procesando la imagen. ¿Podrías agregar un texto describiendo qué necesitas de la imagen?"
                     else:
                         error_msg = "Disculpa, hubo un error procesando tu mensaje. ¿Podrías intentar de nuevo?"
                     
