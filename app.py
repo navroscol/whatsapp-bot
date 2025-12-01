@@ -4,7 +4,6 @@ from openai import OpenAI
 import requests
 import base64
 import time
-import threading
 
 app = Flask(__name__)
 
@@ -15,56 +14,6 @@ client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
 EVOLUTION_API_URL = os.environ.get('EVOLUTION_API_URL')
 EVOLUTION_API_KEY = os.environ.get('EVOLUTION_API_KEY')
 INSTANCE_NAME = os.environ.get('INSTANCE_NAME', 'my-whatsapp')
-
-def send_typing_indicator(phone_number):
-    """Muestra el estado 'escribiendo...' en WhatsApp"""
-    url = f"{EVOLUTION_API_URL}/chat/updatePresence/{INSTANCE_NAME}"
-    
-    headers = {
-        'Content-Type': 'application/json',
-        'apikey': EVOLUTION_API_KEY
-    }
-    
-    data = {
-        "number": phone_number,
-        "presence": "composing"
-    }
-    
-    try:
-        response = requests.post(url, json=data, headers=headers)
-        print(f"Typing indicator response: {response.status_code} - {response.text}")
-        return response.json()
-    except Exception as e:
-        print(f"Error enviando indicador de escritura: {e}")
-        return None
-
-def keep_typing(phone_number, stop_event):
-    """Mantiene el indicador 'escribiendo...' activo continuamente"""
-    while not stop_event.is_set():
-        send_typing_indicator(phone_number)
-        time.sleep(2)  # Reenviar cada 2 segundos
-
-def stop_typing_indicator(phone_number):
-    """Detiene el estado 'escribiendo...' en WhatsApp"""
-    url = f"{EVOLUTION_API_URL}/chat/updatePresence/{INSTANCE_NAME}"
-    
-    headers = {
-        'Content-Type': 'application/json',
-        'apikey': EVOLUTION_API_KEY
-    }
-    
-    data = {
-        "number": phone_number,
-        "presence": "available"  # o "paused"
-    }
-    
-    try:
-        response = requests.post(url, json=data, headers=headers)
-        print(f"Stop typing response: {response.status_code}")
-        return response.json()
-    except Exception as e:
-        print(f"Error deteniendo indicador: {e}")
-        return None
 
 def send_whatsapp_message(phone_number, message):
     """Envía un mensaje de WhatsApp usando Evolution API"""
@@ -125,9 +74,19 @@ def send_welcome_message(phone_number):
 # Diccionario para rastrear usuarios nuevos (en memoria)
 user_sessions = {}
 
+# Diccionario para almacenar el historial de conversación de cada usuario
+conversation_history = {}
+
 def get_chatgpt_response(message, phone_number, image_url=None):
-    """Obtiene respuesta de ChatGPT con soporte para imágenes"""
+    """Obtiene respuesta de ChatGPT con soporte para imágenes y MEMORIA CONVERSACIONAL"""
     try:
+        # Inicializar historial si no existe para este usuario
+        if phone_number not in conversation_history:
+            conversation_history[phone_number] = []
+        
+        # Obtener historial del usuario (últimos 10 mensajes para no exceder límites)
+        user_history = conversation_history[phone_number][-10:]
+        
         # Mensaje del sistema mejorado con información de NAVROS
         system_message = {
             "role": "system", 
@@ -208,6 +167,7 @@ REGLAS CLAVE:
 • Si no sabes algo, admítelo de forma apropiada al tono
 • Puedes cambiar de tono en la misma conversación si el usuario cambia
 • Nunca seas robótico o genérico
+• RECUERDA toda la conversación anterior con este usuario
 
 EJEMPLOS REALES:
 
@@ -225,6 +185,9 @@ Tú: "La segunda ley de Newton, también conocida como el principio fundamental 
 
 ¡Sé el camaleón perfecto! Adapta, conecta, ayuda."""
         }
+        
+        # Construir mensajes incluyendo el historial
+        messages = [system_message] + user_history
         
         # Si hay una imagen, usamos GPT-4o con visión
         if image_url:
@@ -247,25 +210,37 @@ Tú: "La segunda ley de Newton, también conocida como el principio fundamental 
                 ]
             }
             
+            messages.append(user_message)
+            
             response = client.chat.completions.create(
                 model="gpt-4o",
-                messages=[system_message, user_message],
+                messages=messages,
                 max_tokens=2000,
                 temperature=0.8
             )
         else:
             # Sin imagen, mensaje de texto normal con GPT-4o
+            user_message = {"role": "user", "content": message}
+            messages.append(user_message)
+            
             response = client.chat.completions.create(
                 model="gpt-4o",
-                messages=[
-                    system_message,
-                    {"role": "user", "content": message}
-                ],
+                messages=messages,
                 max_tokens=2000,
                 temperature=0.8
             )
         
-        return response.choices[0].message.content
+        assistant_response = response.choices[0].message.content
+        
+        # Guardar el intercambio en el historial (solo texto, no imágenes completas para ahorrar tokens)
+        conversation_history[phone_number].append({"role": "user", "content": message if message else "[imagen enviada]"})
+        conversation_history[phone_number].append({"role": "assistant", "content": assistant_response})
+        
+        # Limitar historial a últimos 20 mensajes (10 intercambios) para no exceder límites
+        if len(conversation_history[phone_number]) > 20:
+            conversation_history[phone_number] = conversation_history[phone_number][-20:]
+        
+        return assistant_response
     except Exception as e:
         print(f"Error con OpenAI: {e}")
         return "Lo siento, hubo un error procesando tu mensaje. Por favor intenta de nuevo."
@@ -342,39 +317,17 @@ def webhook():
                 if image_url:
                     print(f"Con imagen: {image_url}")
                 
-                # Crear evento para controlar el indicador de escritura
-                stop_typing = threading.Event()
-                
-                # Iniciar indicador "escribiendo..." en un thread separado
-                typing_thread = threading.Thread(
-                    target=keep_typing, 
-                    args=(phone_number, stop_typing),
-                    daemon=True  # Thread daemon para que no bloquee
-                )
-                typing_thread.start()
-                
                 try:
                     # Obtiene respuesta de ChatGPT (con o sin imagen)
                     chatgpt_response = get_chatgpt_response(text, phone_number, image_url)
-                    
-                    # Detener el indicador de escritura
-                    stop_typing.set()
-                    typing_thread.join(timeout=0.5)
-                    
-                    # Enviar estado final de "pausado"
-                    stop_typing_indicator(phone_number)
-                    
-                    # Pequeña pausa antes de enviar mensaje
-                    time.sleep(0.3)
                     
                     # Envía respuesta por WhatsApp
                     send_whatsapp_message(phone_number, chatgpt_response)
                     
                 except Exception as e:
-                    # En caso de error, asegurar que se detenga el typing
-                    stop_typing.set()
-                    typing_thread.join(timeout=0.5)
                     print(f"Error procesando: {e}")
+                    # Enviar mensaje de error amigable
+                    send_whatsapp_message(phone_number, "Disculpa, hubo un error procesando tu mensaje. ¿Podrías intentar de nuevo?")
                 
                 return jsonify({
                     "status": "success",
