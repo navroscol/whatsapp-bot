@@ -43,8 +43,8 @@ def get_chatgpt_response(message, phone_number):
                 {"role": "system", "content": "Eres NAVROS, un asistente de inteligencia artificial desarrollado por OpenAI. Respondes de forma inteligente, detallada y natural. Puedes ayudar con cualquier tema: explicar conceptos, resolver problemas, dar consejos, programar, escribir, analizar información y mucho más. Siempre eres útil, creativo y conversacional. Adaptas tu tono al contexto de la conversación."},
                 {"role": "user", "content": message}
             ],
-            max_tokens=500,
-            temperature=0.7
+            max_tokens=2000,
+            temperature=0.8
         )
         return response.choices[0].message.content
     except Exception as e:
