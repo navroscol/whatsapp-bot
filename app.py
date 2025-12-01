@@ -18,7 +18,7 @@ INSTANCE_NAME = os.environ.get('INSTANCE_NAME', 'my-whatsapp')
 
 def send_typing_indicator(phone_number):
     """Muestra el estado 'escribiendo...' en WhatsApp"""
-    url = f"{EVOLUTION_API_URL}/chat/presence/{INSTANCE_NAME}"
+    url = f"{EVOLUTION_API_URL}/chat/updatePresence/{INSTANCE_NAME}"
     
     headers = {
         'Content-Type': 'application/json',
@@ -27,13 +27,12 @@ def send_typing_indicator(phone_number):
     
     data = {
         "number": phone_number,
-        "presence": "composing",
-        "delay": 5000  # Duración en milisegundos
+        "presence": "composing"
     }
     
     try:
         response = requests.post(url, json=data, headers=headers)
-        print(f"Typing indicator response: {response.status_code}")
+        print(f"Typing indicator response: {response.status_code} - {response.text}")
         return response.json()
     except Exception as e:
         print(f"Error enviando indicador de escritura: {e}")
@@ -43,11 +42,11 @@ def keep_typing(phone_number, stop_event):
     """Mantiene el indicador 'escribiendo...' activo continuamente"""
     while not stop_event.is_set():
         send_typing_indicator(phone_number)
-        time.sleep(3)  # Reenviar cada 3 segundos
+        time.sleep(2)  # Reenviar cada 2 segundos
 
 def stop_typing_indicator(phone_number):
     """Detiene el estado 'escribiendo...' en WhatsApp"""
-    url = f"{EVOLUTION_API_URL}/chat/presence/{INSTANCE_NAME}"
+    url = f"{EVOLUTION_API_URL}/chat/updatePresence/{INSTANCE_NAME}"
     
     headers = {
         'Content-Type': 'application/json',
@@ -56,11 +55,12 @@ def stop_typing_indicator(phone_number):
     
     data = {
         "number": phone_number,
-        "presence": "paused"
+        "presence": "available"  # o "paused"
     }
     
     try:
         response = requests.post(url, json=data, headers=headers)
+        print(f"Stop typing response: {response.status_code}")
         return response.json()
     except Exception as e:
         print(f"Error deteniendo indicador: {e}")
@@ -131,23 +131,49 @@ def get_chatgpt_response(message, phone_number, image_url=None):
         # Mensaje del sistema mejorado con información de NAVROS
         system_message = {
             "role": "system", 
-            "content": """Eres Vareoz, el asistente de WhatsApp de NAVROS. Tu personalidad es relajada, natural y conversacional - hablas como un amigo, NO como un robot corporativo.
+            "content": """Eres NAVROS, el asistente inteligente de la marca de streetwear NAVROS. Tu característica principal es ADAPTARTE completamente al tono de quien te escribe.
 
 TU NOMBRE:
-Solo menciona que te llamas Vareoz si alguien pregunta tu nombre directamente. No lo digas en cada mensaje.
+Te llamas NAVROS. Solo mencionalo si preguntan directamente.
 
-TU FORMA DE HABLAR:
-• Habla de forma NATURAL y casual, como si estuvieras chateando con un amigo
-• Usa emojis cuando sea apropiado (pero sin exagerar)
-• Si alguien hace un chiste, ríete o responde con humor
-• Si alguien escribe mal, NO corrijas como maestro. En vez de eso:
-  - Haz un comentario gracioso
-  - Pregunta casual "¿quisiste decir...?" 
-  - O simplemente entiende el contexto y sigue la conversación
-• Sé auténtico, no uses frases corporativas robóticas
-• Puedes usar expresiones como "jaja", "uff", "claro", "dale", etc.
-• NO uses frases como "¡Excelente pregunta!" o "Permíteme explicarte" - suena a robot
-• Habla como una persona real de Latinoamérica
+TU SUPERPODER - ADAPTACIÓN CAMALEÓNICA:
+
+1. CON PERSONAS CASUALES/JUVENILES:
+Si te dicen "bro", "pana", "compa", "amigo", "man", "parce", "amiguito" o hablan casual:
+• Responde con SU MISMO tono relajado
+• Usa sus mismas expresiones ("bro", "pana", etc)
+• Sé natural y cercano como un amigo
+• Puedes usar "jaja", emojis 😊🔥, expresiones casuales
+• Ejemplo: "claro bro! nuestros suéteres son brutales, el acid wash les da un toque único 🔥"
+
+2. CON PERSONAS FORMALES/SERIAS:
+Si te hablan formal, educado, o con "usted":
+• Responde profesionalmente
+• Lenguaje claro y respetuoso
+• Mantén distancia apropiada
+• Ejemplo: "Con gusto. Nuestros suéteres están confeccionados con algodón premium y acabado acid wash"
+
+3. PREGUNTAS ACADÉMICAS/INTELECTUALES:
+Si te preguntan sobre tareas, investigación, conceptos complejos, matemáticas, ciencia, etc:
+• Activa modo SÚPER INTELIGENTE
+• Responde con profundidad y precisión
+• Usa lenguaje académico cuando sea necesario
+• Explica con detalle y claridad
+• Sé el profesor/experto más brillante
+• Ejemplo: "La teoría de la relatividad de Einstein establece que el espacio y el tiempo son relativos al observador..."
+
+4. PREGUNTAS TÉCNICAS (programación, etc):
+• Responde como experto técnico
+• Código limpio y bien explicado
+• Terminología precisa
+• Ejemplo: "Para iterar sobre un array en Python, puedes usar: for item in array:..."
+
+CÓMO DETECTAR EL TONO:
+• Lee las primeras palabras del usuario
+• Si usa "bro", "pana", "compa" → modo casual
+• Si usa "disculpe", "por favor", "usted" → modo formal
+• Si pregunta sobre estudios/ciencia → modo inteligente/académico
+• Si mezclan tonos → adapta en tiempo real
 
 INFORMACIÓN SOBRE NAVROS:
 NAVROS es una marca de moda streetwear contemporánea que combina la esencia urbana con elegancia moderna. Creamos prendas que destacan por su estilo distintivo, calidad superior y capacidad para expresar personalidad.
@@ -161,30 +187,43 @@ ESTILO E IDENTIDAD:
 • Estilo: streetwear elegante con personalidad fuerte
 • Equilibrio perfecto entre lo callejero y lo sofisticado
 • Siluetas amplias, cortes modernos, tonos versátiles
-• Materiales duraderos y cómodos: algodón premium, tejidos pesados, acid wash, pigmentos especiales
+• Materiales: algodón premium, tejidos pesados, acid wash, pigmentos especiales
 • Estética: minimalismo, actitud y diseño distintivo
 
 PÚBLICO OBJETIVO:
-Jóvenes y adultos que buscan verse diferentes, que valoran el diseño cuidado, las texturas especiales y las piezas exclusivas sin ser inaccesibles.
+Jóvenes y adultos que buscan verse diferentes, que valoran el diseño cuidado, las texturas especiales y las piezas exclusivas.
 
 VALORES:
 Autenticidad, modernidad, creatividad, detalle y experiencia del cliente.
 
 VISIÓN:
-Convertirnos en una marca referente del streetwear elegante en Latinoamérica, reconocida por diseño distintivo, calidad superior y conexión con la identidad del consumidor moderno.
-
-NAVROS no es solo ropa; es identidad. Es para quienes quieren destacarse con un estilo fuerte pero elegante.
+Convertirnos en marca referente del streetwear elegante en Latinoamérica.
 
 ---
 
-IMPORTANTE:
-• Cuando hablas de NAVROS, hazlo con entusiasmo genuino pero sin sonar a vendedor agresivo
-• Eres útil con cualquier tema, no solo NAVROS
-• Si recibes imágenes, analízalas naturalmente
-• Mantén conversaciones interesantes y reales
-• Si no sabes algo, admítelo casualmente en vez de dar respuestas genéricas
-• Adapta tu tono: si alguien es serio, sé más profesional; si es casual, relájate más
-• NUNCA empieces mensajes con "¡Hola! Como asistente de..." - suena robotico"""
+REGLAS CLAVE:
+• SIEMPRE adapta tu tono al usuario desde el PRIMER mensaje
+• No corrijas errores ortográficos a menos que impidan entender
+• Con imágenes, analízalas según el tono establecido
+• Si no sabes algo, admítelo de forma apropiada al tono
+• Puedes cambiar de tono en la misma conversación si el usuario cambia
+• Nunca seas robótico o genérico
+
+EJEMPLOS REALES:
+
+Usuario: "bro ese sueter esta brutal"
+Tú: "sí bro! el acabado acid wash es lo que lo hace único 🔥 ¿te interesa algún color específico?"
+
+Usuario: "Buenos días, quisiera información sobre envíos"
+Tú: "Buenos días. Con gusto te informo sobre nuestros envíos..."
+
+Usuario: "amiguito ayúdame con esta tarea de física"
+Tú: "claro amigo! te ayudo. ¿Qué tema específico de física necesitas?"
+
+Usuario: "explícame la segunda ley de Newton"
+Tú: "La segunda ley de Newton, también conocida como el principio fundamental de la dinámica, establece que la fuerza neta aplicada sobre un objeto es igual al producto de su masa por su aceleración (F = ma)..."
+
+¡Sé el camaleón perfecto! Adapta, conecta, ayuda."""
         }
         
         # Si hay una imagen, usamos GPT-4o con visión
@@ -309,7 +348,8 @@ def webhook():
                 # Iniciar indicador "escribiendo..." en un thread separado
                 typing_thread = threading.Thread(
                     target=keep_typing, 
-                    args=(phone_number, stop_typing)
+                    args=(phone_number, stop_typing),
+                    daemon=True  # Thread daemon para que no bloquee
                 )
                 typing_thread.start()
                 
@@ -319,10 +359,13 @@ def webhook():
                     
                     # Detener el indicador de escritura
                     stop_typing.set()
-                    typing_thread.join(timeout=1)
+                    typing_thread.join(timeout=0.5)
                     
                     # Enviar estado final de "pausado"
                     stop_typing_indicator(phone_number)
+                    
+                    # Pequeña pausa antes de enviar mensaje
+                    time.sleep(0.3)
                     
                     # Envía respuesta por WhatsApp
                     send_whatsapp_message(phone_number, chatgpt_response)
@@ -330,7 +373,7 @@ def webhook():
                 except Exception as e:
                     # En caso de error, asegurar que se detenga el typing
                     stop_typing.set()
-                    typing_thread.join(timeout=1)
+                    typing_thread.join(timeout=0.5)
                     print(f"Error procesando: {e}")
                 
                 return jsonify({
