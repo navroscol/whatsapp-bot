@@ -382,7 +382,8 @@ def webhook():
                     
                     response = requests.post(download_url, json=download_data, headers=download_headers, timeout=30)
                     
-                    if response.status_code == 200:
+                    # 200 y 201 son respuestas exitosas
+                    if response.status_code in [200, 201]:
                         result = response.json()
                         base64_data = result.get('base64')
                         
@@ -403,7 +404,7 @@ def webhook():
                         else:
                             print("❌ No se obtuvo base64 de la imagen")
                     else:
-                        print(f"❌ Error descargando imagen: {response.status_code} - {response.text}")
+                        print(f"❌ Error descargando imagen: {response.status_code} - {response.text[:200]}...")
                         
                 except Exception as e:
                     print(f"❌ Error procesando imagen: {e}")
