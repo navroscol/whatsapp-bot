@@ -3,6 +3,8 @@ import os
 from openai import OpenAI
 import requests
 import base64
+import time
+import threading
 
 app = Flask(__name__)
 
@@ -16,7 +18,7 @@ INSTANCE_NAME = os.environ.get('INSTANCE_NAME', 'my-whatsapp')
 
 def send_typing_indicator(phone_number):
     """Muestra el estado 'escribiendo...' en WhatsApp"""
-    url = f"{EVOLUTION_API_URL}/chat/sendPresence/{INSTANCE_NAME}"
+    url = f"{EVOLUTION_API_URL}/chat/presence/{INSTANCE_NAME}"
     
     headers = {
         'Content-Type': 'application/json',
@@ -25,19 +27,27 @@ def send_typing_indicator(phone_number):
     
     data = {
         "number": phone_number,
-        "presence": "composing"  # 'composing' = escribiendo
+        "presence": "composing",
+        "delay": 5000  # Duración en milisegundos
     }
     
     try:
         response = requests.post(url, json=data, headers=headers)
+        print(f"Typing indicator response: {response.status_code}")
         return response.json()
     except Exception as e:
         print(f"Error enviando indicador de escritura: {e}")
         return None
 
+def keep_typing(phone_number, stop_event):
+    """Mantiene el indicador 'escribiendo...' activo continuamente"""
+    while not stop_event.is_set():
+        send_typing_indicator(phone_number)
+        time.sleep(3)  # Reenviar cada 3 segundos
+
 def stop_typing_indicator(phone_number):
     """Detiene el estado 'escribiendo...' en WhatsApp"""
-    url = f"{EVOLUTION_API_URL}/chat/sendPresence/{INSTANCE_NAME}"
+    url = f"{EVOLUTION_API_URL}/chat/presence/{INSTANCE_NAME}"
     
     headers = {
         'Content-Type': 'application/json',
@@ -46,7 +56,7 @@ def stop_typing_indicator(phone_number):
     
     data = {
         "number": phone_number,
-        "presence": "paused"  # 'paused' = dejar de escribir
+        "presence": "paused"
     }
     
     try:
@@ -83,7 +93,23 @@ def get_chatgpt_response(message, phone_number, image_url=None):
         # Mensaje del sistema mejorado con información de NAVROS
         system_message = {
             "role": "system", 
-            "content": """Eres ChatGPT, un asistente de IA avanzado que trabaja para NAVROS, una marca de moda streetwear elegante.
+            "content": """Eres Vareoz, el asistente de WhatsApp de NAVROS. Tu personalidad es relajada, natural y conversacional - hablas como un amigo, NO como un robot corporativo.
+
+TU NOMBRE:
+Solo menciona que te llamas Vareoz si alguien pregunta tu nombre directamente. No lo digas en cada mensaje.
+
+TU FORMA DE HABLAR:
+• Habla de forma NATURAL y casual, como si estuvieras chateando con un amigo
+• Usa emojis cuando sea apropiado (pero sin exagerar)
+• Si alguien hace un chiste, ríete o responde con humor
+• Si alguien escribe mal, NO corrijas como maestro. En vez de eso:
+  - Haz un comentario gracioso
+  - Pregunta casual "¿quisiste decir...?" 
+  - O simplemente entiende el contexto y sigue la conversación
+• Sé auténtico, no uses frases corporativas robóticas
+• Puedes usar expresiones como "jaja", "uff", "claro", "dale", etc.
+• NO uses frases como "¡Excelente pregunta!" o "Permíteme explicarte" - suena a robot
+• Habla como una persona real de Latinoamérica
 
 INFORMACIÓN SOBRE NAVROS:
 NAVROS es una marca de moda streetwear contemporánea que combina la esencia urbana con elegancia moderna. Creamos prendas que destacan por su estilo distintivo, calidad superior y capacidad para expresar personalidad.
@@ -113,14 +139,14 @@ NAVROS no es solo ropa; es identidad. Es para quienes quieren destacarse con un 
 
 ---
 
-Como asistente de NAVROS, debes:
-• Responder con entusiasmo cuando te pregunten sobre NAVROS, sus productos o valores
-• Ser extremadamente inteligente, útil y versátil en cualquier otro tema
-• Cuando recibas imágenes, analizarlas cuidadosamente y proporcionar descripciones detalladas
-• Responder de forma conversacional, natural e inteligente
-• Adaptar tu tono al contexto de la conversación
-• Si te preguntan para quién trabajas, di que eres el asistente de NAVROS
-• Promover los valores de autenticidad, calidad y exclusividad que representa NAVROS"""
+IMPORTANTE:
+• Cuando hablas de NAVROS, hazlo con entusiasmo genuino pero sin sonar a vendedor agresivo
+• Eres útil con cualquier tema, no solo NAVROS
+• Si recibes imágenes, analízalas naturalmente
+• Mantén conversaciones interesantes y reales
+• Si no sabes algo, admítelo casualmente en vez de dar respuestas genéricas
+• Adapta tu tono: si alguien es serio, sé más profesional; si es casual, relájate más
+• NUNCA empieces mensajes con "¡Hola! Como asistente de..." - suena robotico"""
         }
         
         # Si hay una imagen, usamos GPT-4o con visión
@@ -224,17 +250,35 @@ def webhook():
                 if image_url:
                     print(f"Con imagen: {image_url}")
                 
-                # Mostrar "escribiendo..." mientras genera la respuesta
-                send_typing_indicator(phone_number)
+                # Crear evento para controlar el indicador de escritura
+                stop_typing = threading.Event()
                 
-                # Obtiene respuesta de ChatGPT (con o sin imagen)
-                chatgpt_response = get_chatgpt_response(text, phone_number, image_url)
+                # Iniciar indicador "escribiendo..." en un thread separado
+                typing_thread = threading.Thread(
+                    target=keep_typing, 
+                    args=(phone_number, stop_typing)
+                )
+                typing_thread.start()
                 
-                # Detener "escribiendo..." antes de enviar
-                stop_typing_indicator(phone_number)
-                
-                # Envía respuesta por WhatsApp
-                send_whatsapp_message(phone_number, chatgpt_response)
+                try:
+                    # Obtiene respuesta de ChatGPT (con o sin imagen)
+                    chatgpt_response = get_chatgpt_response(text, phone_number, image_url)
+                    
+                    # Detener el indicador de escritura
+                    stop_typing.set()
+                    typing_thread.join(timeout=1)
+                    
+                    # Enviar estado final de "pausado"
+                    stop_typing_indicator(phone_number)
+                    
+                    # Envía respuesta por WhatsApp
+                    send_whatsapp_message(phone_number, chatgpt_response)
+                    
+                except Exception as e:
+                    # En caso de error, asegurar que se detenga el typing
+                    stop_typing.set()
+                    typing_thread.join(timeout=1)
+                    print(f"Error procesando: {e}")
                 
                 return jsonify({
                     "status": "success",
