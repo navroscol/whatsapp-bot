@@ -38,7 +38,7 @@ def get_chatgpt_response(message, phone_number):
     """Obtiene respuesta de ChatGPT"""
     try:
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",  # Puedes cambiarlo a "gpt-4" si quieres mejor calidad
+            model="gpt-4o",  # Puedes cambiarlo a "gpt-4" si quieres mejor calidad
             messages=[
                 {"role": "system", "content": "Eres un asistente útil y amigable en WhatsApp. Responde de forma clara y concisa."},
                 {"role": "user", "content": message}
