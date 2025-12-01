@@ -4,6 +4,8 @@ from openai import OpenAI
 import requests
 import base64
 import time
+import json
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -77,9 +79,56 @@ user_sessions = {}
 # Diccionario para almacenar el historial de conversación de cada usuario
 conversation_history = {}
 
+def get_exchange_rates():
+    """Obtiene tasas de cambio actuales usando API gratuita"""
+    try:
+        # API gratuita de tasas de cambio
+        response = requests.get('https://api.exchangerate-api.com/v4/latest/USD', timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            rates = data.get('rates', {})
+            date = data.get('date', 'N/A')
+            
+            # Tasas principales
+            eur = rates.get('EUR', 'N/A')
+            cop = rates.get('COP', 'N/A')
+            mxn = rates.get('MXN', 'N/A')
+            
+            info = f"""📊 TASAS DE CAMBIO ACTUALES (Actualizado: {date})
+
+1 USD = {eur} EUR (Euro)
+1 USD = {cop} COP (Peso Colombiano)
+1 USD = {mxn} MXN (Peso Mexicano)
+
+Para otras monedas:
+- 1 EUR = {1/eur if eur != 'N/A' else 'N/A'} USD
+- 1 COP = {1/cop if cop != 'N/A' else 'N/A'} USD"""
+            
+            return info
+        else:
+            return None
+    except Exception as e:
+        print(f"Error obteniendo tasas de cambio: {e}")
+        return None
+
+def get_current_info(query):
+    """Intenta obtener información actualizada relevante a la consulta"""
+    query_lower = query.lower()
+    
+    # Detectar si pregunta por tasas de cambio
+    if any(word in query_lower for word in ['dolar', 'dólar', 'euro', 'peso', 'cambio', 'moneda', 'divisa']):
+        return get_exchange_rates()
+    
+    return None
+
 def get_chatgpt_response(message, phone_number, image_url=None):
     """Obtiene respuesta de ChatGPT con soporte para imágenes y MEMORIA CONVERSACIONAL"""
     try:
+        # Primero verificar si necesita información actualizada
+        current_info = None
+        if message and not image_url:  # Solo buscar info actual si es texto puro
+            current_info = get_current_info(message)
+        
         # Inicializar historial si no existe para este usuario
         if phone_number not in conversation_history:
             conversation_history[phone_number] = []
@@ -189,6 +238,12 @@ Tú: "La segunda ley de Newton, también conocida como el principio fundamental 
         # Construir mensajes incluyendo el historial
         messages = [system_message] + user_history
         
+        # Si hay información actual disponible, agregarla al mensaje
+        final_message = message
+        if current_info:
+            final_message = f"{message}\n\n[INFORMACIÓN ACTUALIZADA EN TIEMPO REAL]\n{current_info}\n\nUsa esta información para responder la pregunta del usuario."
+            print(f"✅ Información actualizada agregada: {current_info[:100]}...")
+        
         # Si hay una imagen, usamos GPT-4o con visión
         if image_url:
             print(f"Procesando imagen con GPT-4o Vision...")
@@ -200,7 +255,7 @@ Tú: "La segunda ley de Newton, también conocida como el principio fundamental 
                     "content": [
                         {
                             "type": "text",
-                            "text": message if message else "¿Qué hay en esta imagen?"
+                            "text": final_message if final_message else "¿Qué hay en esta imagen?"
                         },
                         {
                             "type": "image_url",
@@ -239,7 +294,7 @@ Tú: "La segunda ley de Newton, también conocida como el principio fundamental 
                     raise Exception("No pude procesar la imagen y no hay texto alternativo")
         else:
             # Sin imagen, mensaje de texto normal con GPT-4o
-            user_message = {"role": "user", "content": message}
+            user_message = {"role": "user", "content": final_message}
             messages.append(user_message)
             
             response = client.chat.completions.create(
@@ -334,6 +389,13 @@ def webhook():
                         if base64_data:
                             # Obtener el tipo MIME (por defecto jpeg)
                             mime_type = image_msg.get('mimetype', 'image/jpeg')
+                            
+                            # Limpiar el base64 (remover espacios, saltos de línea, prefijos, etc)
+                            base64_data = base64_data.replace('\n', '').replace('\r', '').replace(' ', '').strip()
+                            
+                            # Remover cualquier prefijo de data URL si existe
+                            if 'base64,' in base64_data:
+                                base64_data = base64_data.split('base64,')[1]
                             
                             # Convertir a URL de datos para OpenAI
                             image_url = f"data:{mime_type};base64,{base64_data}"
