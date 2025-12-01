@@ -87,6 +87,44 @@ def send_whatsapp_message(phone_number, message):
         print(f"Error enviando mensaje: {e}")
         return None
 
+def send_welcome_message(phone_number):
+    """Envía mensaje de bienvenida con botones interactivos"""
+    url = f"{EVOLUTION_API_URL}/message/sendButtons/{INSTANCE_NAME}"
+    
+    headers = {
+        'Content-Type': 'application/json',
+        'apikey': EVOLUTION_API_KEY
+    }
+    
+    data = {
+        "number": phone_number,
+        "title": "🖤 ¡Bienvenido a NAVROS!",
+        "description": "Streetwear elegante con actitud. Explora nuestras redes:",
+        "buttons": [
+            {
+                "type": "url",
+                "displayText": "📸 Instagram",
+                "url": "https://www.instagram.com/navros.co/"
+            },
+            {
+                "type": "url", 
+                "displayText": "🌐 Página Web",
+                "url": "https://navros.co/"
+            }
+        ]
+    }
+    
+    try:
+        response = requests.post(url, json=data, headers=headers)
+        print(f"Welcome message sent: {response.status_code}")
+        return response.json()
+    except Exception as e:
+        print(f"Error enviando mensaje de bienvenida: {e}")
+        return None
+
+# Diccionario para rastrear usuarios nuevos (en memoria)
+user_sessions = {}
+
 def get_chatgpt_response(message, phone_number, image_url=None):
     """Obtiene respuesta de ChatGPT con soporte para imágenes"""
     try:
@@ -247,6 +285,21 @@ def webhook():
             # Procesar si hay contenido (texto o imagen)
             if (text or image_url) and phone_number:
                 print(f"Procesando mensaje de {phone_number}")
+                
+                # Verificar si es un usuario nuevo (primera interacción)
+                is_new_user = phone_number not in user_sessions
+                
+                if is_new_user:
+                    print(f"Nuevo usuario detectado: {phone_number}")
+                    # Marcar usuario como visto
+                    user_sessions[phone_number] = True
+                    
+                    # Enviar mensaje de bienvenida con botones
+                    send_welcome_message(phone_number)
+                    
+                    # Esperar un poco para que llegue el mensaje de bienvenida primero
+                    time.sleep(1)
+                
                 if image_url:
                     print(f"Con imagen: {image_url}")
                 
@@ -283,7 +336,8 @@ def webhook():
                 return jsonify({
                     "status": "success",
                     "message": "Respuesta enviada",
-                    "had_image": image_url is not None
+                    "had_image": image_url is not None,
+                    "new_user": is_new_user
                 }), 200
         
         return jsonify({"status": "ok"}), 200
