@@ -191,33 +191,52 @@ Tú: "La segunda ley de Newton, también conocida como el principio fundamental 
         
         # Si hay una imagen, usamos GPT-4o con visión
         if image_url:
-            print(f"Procesando imagen desde: {image_url}")
+            print(f"Procesando imagen con GPT-4o Vision...")
             
-            # Crear el mensaje con la imagen
-            user_message = {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": message if message else "¿Qué hay en esta imagen?"
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": image_url
+            try:
+                # Crear el mensaje con la imagen
+                user_message = {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": message if message else "¿Qué hay en esta imagen?"
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": image_url
+                            }
                         }
-                    }
-                ]
-            }
-            
-            messages.append(user_message)
-            
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=messages,
-                max_tokens=2000,
-                temperature=0.8
-            )
+                    ]
+                }
+                
+                messages.append(user_message)
+                
+                response = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=messages,
+                    max_tokens=2000,
+                    temperature=0.8
+                )
+                
+                print("Imagen procesada exitosamente")
+                
+            except Exception as img_error:
+                print(f"Error procesando imagen con OpenAI: {img_error}")
+                # Si falla con imagen, intentar solo con el texto
+                if message:
+                    print("Reintentando solo con texto...")
+                    user_message = {"role": "user", "content": f"{message} [Nota: Había una imagen pero no pude procesarla]"}
+                    messages.append(user_message)
+                    response = client.chat.completions.create(
+                        model="gpt-4o",
+                        messages=messages,
+                        max_tokens=2000,
+                        temperature=0.8
+                    )
+                else:
+                    raise Exception("No pude procesar la imagen y no hay texto alternativo")
         else:
             # Sin imagen, mensaje de texto normal con GPT-4o
             user_message = {"role": "user", "content": message}
@@ -291,8 +310,41 @@ def webhook():
                 if caption:
                     text = caption
                 
-                # Obtener URL de la imagen
-                image_url = image_msg.get('url')
+                # Evolution API puede devolver la imagen de varias formas
+                # Intentar obtener la URL de diferentes campos posibles
+                if image_msg.get('url'):
+                    image_url = image_msg.get('url')
+                elif image_msg.get('directPath'):
+                    # Construir URL completa desde directPath
+                    base_url = EVOLUTION_API_URL.replace('/v1', '')
+                    image_url = f"{base_url}{image_msg.get('directPath')}"
+                
+                # Si aún no tenemos URL, intentar descargar la imagen con Evolution API
+                if not image_url and message_data.get('key'):
+                    message_id = message_data.get('key', {}).get('id')
+                    if message_id:
+                        try:
+                            # Endpoint para obtener la imagen
+                            download_url = f"{EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/{INSTANCE_NAME}"
+                            download_data = {
+                                "message": message_data
+                            }
+                            download_headers = {
+                                'Content-Type': 'application/json',
+                                'apikey': EVOLUTION_API_KEY
+                            }
+                            
+                            response = requests.post(download_url, json=download_data, headers=download_headers)
+                            if response.status_code == 200:
+                                result = response.json()
+                                base64_data = result.get('base64')
+                                if base64_data:
+                                    # Convertir base64 a URL de datos
+                                    mime_type = image_msg.get('mimetype', 'image/jpeg')
+                                    image_url = f"data:{mime_type};base64,{base64_data}"
+                                    print(f"Imagen convertida a base64 data URL")
+                        except Exception as e:
+                            print(f"Error descargando imagen: {e}")
                 
                 print(f"Imagen detectada - URL: {image_url}, Caption: {caption}")
             
@@ -315,7 +367,7 @@ def webhook():
                     time.sleep(1)
                 
                 if image_url:
-                    print(f"Con imagen: {image_url}")
+                    print(f"Procesando con imagen: {image_url[:100]}...")  # Solo mostrar primeros 100 caracteres
                 
                 try:
                     # Obtiene respuesta de ChatGPT (con o sin imagen)
@@ -325,9 +377,17 @@ def webhook():
                     send_whatsapp_message(phone_number, chatgpt_response)
                     
                 except Exception as e:
-                    print(f"Error procesando: {e}")
-                    # Enviar mensaje de error amigable
-                    send_whatsapp_message(phone_number, "Disculpa, hubo un error procesando tu mensaje. ¿Podrías intentar de nuevo?")
+                    print(f"Error procesando mensaje: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    
+                    # Enviar mensaje de error más específico
+                    if image_url:
+                        error_msg = "Disculpa, tuve un problema procesando la imagen. ¿Podrías intentar enviarla de nuevo o describir qué necesitas?"
+                    else:
+                        error_msg = "Disculpa, hubo un error procesando tu mensaje. ¿Podrías intentar de nuevo?"
+                    
+                    send_whatsapp_message(phone_number, error_msg)
                 
                 return jsonify({
                     "status": "success",
