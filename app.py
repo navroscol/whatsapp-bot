@@ -9,8 +9,18 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-# Configuración de OpenAI
-client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+# Configuración de APIs
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
+XAI_API_KEY = os.environ.get('XAI_API_KEY')  # API key de Grok (xAI)
+
+# Cliente de OpenAI (para imágenes con GPT-4o)
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
+
+# Cliente de Grok (para texto con grok-4-fast-reasoning)
+grok_client = OpenAI(
+    api_key=XAI_API_KEY,
+    base_url="https://api.x.ai/v1"
+) if XAI_API_KEY else None
 
 # Configuración de Evolution API
 EVOLUTION_API_URL = os.environ.get('EVOLUTION_API_URL')
@@ -244,9 +254,9 @@ Tú: "La segunda ley de Newton, también conocida como el principio fundamental 
             final_message = f"{message}\n\n[INFORMACIÓN ACTUALIZADA EN TIEMPO REAL]\n{current_info}\n\nUsa esta información para responder la pregunta del usuario."
             print(f"✅ Información actualizada agregada: {current_info[:100]}...")
         
-        # Si hay una imagen, usamos GPT-4o con visión
+        # Si hay una imagen, usamos GPT-4o con visión (mejor calidad)
         if image_url:
-            print(f"Procesando imagen con GPT-4o Vision...")
+            print(f"📸 Procesando imagen con GPT-4o Vision...")
             
             try:
                 # Crear el mensaje con la imagen
@@ -268,23 +278,24 @@ Tú: "La segunda ley de Newton, también conocida como el principio fundamental 
                 
                 messages.append(user_message)
                 
-                response = client.chat.completions.create(
+                # Usar OpenAI GPT-4o para imágenes
+                response = openai_client.chat.completions.create(
                     model="gpt-4o",
                     messages=messages,
                     max_tokens=2000,
                     temperature=0.8
                 )
                 
-                print("Imagen procesada exitosamente")
+                print("✅ Imagen procesada exitosamente con GPT-4o")
                 
             except Exception as img_error:
-                print(f"Error procesando imagen con OpenAI: {img_error}")
+                print(f"❌ Error procesando imagen con OpenAI: {img_error}")
                 # Si falla con imagen, intentar solo con el texto
                 if message:
                     print("Reintentando solo con texto...")
                     user_message = {"role": "user", "content": f"{message} [Nota: Había una imagen pero no pude procesarla]"}
                     messages.append(user_message)
-                    response = client.chat.completions.create(
+                    response = openai_client.chat.completions.create(
                         model="gpt-4o",
                         messages=messages,
                         max_tokens=2000,
@@ -293,12 +304,22 @@ Tú: "La segunda ley de Newton, también conocida como el principio fundamental 
                 else:
                     raise Exception("No pude procesar la imagen y no hay texto alternativo")
         else:
-            # Sin imagen, mensaje de texto normal con GPT-4o
+            # Sin imagen, usar Grok para texto (93% más barato)
+            # Si no hay API key de Grok, usar GPT-4o como fallback
+            if grok_client:
+                print(f"💬 Procesando texto con Grok-4-fast-reasoning...")
+                model_to_use = "grok-4-fast-reasoning"
+                client_to_use = grok_client
+            else:
+                print(f"💬 Procesando texto con GPT-4o (Grok no configurado)...")
+                model_to_use = "gpt-4o"
+                client_to_use = openai_client
+            
             user_message = {"role": "user", "content": final_message}
             messages.append(user_message)
             
-            response = client.chat.completions.create(
-                model="gpt-4o",
+            response = client_to_use.chat.completions.create(
+                model=model_to_use,
                 messages=messages,
                 max_tokens=2000,
                 temperature=0.8
