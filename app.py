@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 import os
 from openai import OpenAI
 import requests
+import base64
 
 app = Flask(__name__)
 
@@ -12,6 +13,48 @@ client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
 EVOLUTION_API_URL = os.environ.get('EVOLUTION_API_URL')
 EVOLUTION_API_KEY = os.environ.get('EVOLUTION_API_KEY')
 INSTANCE_NAME = os.environ.get('INSTANCE_NAME', 'my-whatsapp')
+
+def send_typing_indicator(phone_number):
+    """Muestra el estado 'escribiendo...' en WhatsApp"""
+    url = f"{EVOLUTION_API_URL}/chat/sendPresence/{INSTANCE_NAME}"
+    
+    headers = {
+        'Content-Type': 'application/json',
+        'apikey': EVOLUTION_API_KEY
+    }
+    
+    data = {
+        "number": phone_number,
+        "presence": "composing"  # 'composing' = escribiendo
+    }
+    
+    try:
+        response = requests.post(url, json=data, headers=headers)
+        return response.json()
+    except Exception as e:
+        print(f"Error enviando indicador de escritura: {e}")
+        return None
+
+def stop_typing_indicator(phone_number):
+    """Detiene el estado 'escribiendo...' en WhatsApp"""
+    url = f"{EVOLUTION_API_URL}/chat/sendPresence/{INSTANCE_NAME}"
+    
+    headers = {
+        'Content-Type': 'application/json',
+        'apikey': EVOLUTION_API_KEY
+    }
+    
+    data = {
+        "number": phone_number,
+        "presence": "paused"  # 'paused' = dejar de escribir
+    }
+    
+    try:
+        response = requests.post(url, json=data, headers=headers)
+        return response.json()
+    except Exception as e:
+        print(f"Error deteniendo indicador: {e}")
+        return None
 
 def send_whatsapp_message(phone_number, message):
     """Envía un mensaje de WhatsApp usando Evolution API"""
@@ -34,18 +77,91 @@ def send_whatsapp_message(phone_number, message):
         print(f"Error enviando mensaje: {e}")
         return None
 
-def get_chatgpt_response(message, phone_number):
-    """Obtiene respuesta de ChatGPT"""
+def get_chatgpt_response(message, phone_number, image_url=None):
+    """Obtiene respuesta de ChatGPT con soporte para imágenes"""
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o",  # Puedes cambiarlo a "gpt-4" si quieres mejor calidad
-            messages=[
-                {"role": "system", "content": "Eres NAVROS, un asistente de inteligencia artificial desarrollado por OpenAI. Respondes de forma inteligente, detallada y natural. Puedes ayudar con cualquier tema: explicar conceptos, resolver problemas, dar consejos, programar, escribir, analizar información y mucho más. Siempre eres útil, creativo y conversacional. Adaptas tu tono al contexto de la conversación."},
-                {"role": "user", "content": message}
-            ],
-            max_tokens=2000,
-            temperature=0.8
-        )
+        # Mensaje del sistema mejorado con información de NAVROS
+        system_message = {
+            "role": "system", 
+            "content": """Eres ChatGPT, un asistente de IA avanzado que trabaja para NAVROS, una marca de moda streetwear elegante.
+
+INFORMACIÓN SOBRE NAVROS:
+NAVROS es una marca de moda streetwear contemporánea que combina la esencia urbana con elegancia moderna. Creamos prendas que destacan por su estilo distintivo, calidad superior y capacidad para expresar personalidad.
+
+PRODUCTOS PRINCIPALES:
+• Suéteres Oversize Premium: prendas gruesas, pesadas, de alta durabilidad, estilo acid wash, confección premium, tacto suave y acabados exclusivos
+• Camisetas Streetwear: cortes amplios, caídas limpias, tonos sobrios, ideales para outfits urbanos y sofisticados
+• Próximamente: Hoodies premium, Joggers elegantes, Camisas street-elegance, Accesorios minimalistas
+
+ESTILO E IDENTIDAD:
+• Estilo: streetwear elegante con personalidad fuerte
+• Equilibrio perfecto entre lo callejero y lo sofisticado
+• Siluetas amplias, cortes modernos, tonos versátiles
+• Materiales duraderos y cómodos: algodón premium, tejidos pesados, acid wash, pigmentos especiales
+• Estética: minimalismo, actitud y diseño distintivo
+
+PÚBLICO OBJETIVO:
+Jóvenes y adultos que buscan verse diferentes, que valoran el diseño cuidado, las texturas especiales y las piezas exclusivas sin ser inaccesibles.
+
+VALORES:
+Autenticidad, modernidad, creatividad, detalle y experiencia del cliente.
+
+VISIÓN:
+Convertirnos en una marca referente del streetwear elegante en Latinoamérica, reconocida por diseño distintivo, calidad superior y conexión con la identidad del consumidor moderno.
+
+NAVROS no es solo ropa; es identidad. Es para quienes quieren destacarse con un estilo fuerte pero elegante.
+
+---
+
+Como asistente de NAVROS, debes:
+• Responder con entusiasmo cuando te pregunten sobre NAVROS, sus productos o valores
+• Ser extremadamente inteligente, útil y versátil en cualquier otro tema
+• Cuando recibas imágenes, analizarlas cuidadosamente y proporcionar descripciones detalladas
+• Responder de forma conversacional, natural e inteligente
+• Adaptar tu tono al contexto de la conversación
+• Si te preguntan para quién trabajas, di que eres el asistente de NAVROS
+• Promover los valores de autenticidad, calidad y exclusividad que representa NAVROS"""
+        }
+        
+        # Si hay una imagen, usamos GPT-4o con visión
+        if image_url:
+            print(f"Procesando imagen desde: {image_url}")
+            
+            # Crear el mensaje con la imagen
+            user_message = {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": message if message else "¿Qué hay en esta imagen?"
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": image_url
+                        }
+                    }
+                ]
+            }
+            
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[system_message, user_message],
+                max_tokens=2000,
+                temperature=0.8
+            )
+        else:
+            # Sin imagen, mensaje de texto normal con GPT-4o
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    system_message,
+                    {"role": "user", "content": message}
+                ],
+                max_tokens=2000,
+                temperature=0.8
+            )
+        
         return response.choices[0].message.content
     except Exception as e:
         print(f"Error con OpenAI: {e}")
@@ -55,7 +171,8 @@ def get_chatgpt_response(message, phone_number):
 def home():
     return jsonify({
         "status": "Bot de WhatsApp funcionando ✅",
-        "mensaje": "Envía mensajes al webhook /webhook"
+        "mensaje": "Envía mensajes al webhook /webhook",
+        "features": "Soporte para texto e imágenes con GPT-4o"
     })
 
 @app.route('/webhook', methods=['POST'])
@@ -65,36 +182,65 @@ def webhook():
         data = request.json
         print(f"Mensaje recibido: {data}")
         
-        # Verifica que sea un mensaje de texto
+        # Verifica que sea un mensaje entrante
         if data.get('event') == 'messages.upsert':
             message_data = data.get('data', {})
             
             # Extrae información del mensaje
             message_info = message_data.get('message', {})
+            phone_number = message_data.get('key', {}).get('remoteJid')
+            from_me = message_data.get('key', {}).get('fromMe', False)
             
-            # Solo procesa mensajes de texto del usuario (no respuestas del bot)
-            if message_info.get('conversation') or message_info.get('extendedTextMessage'):
-                text = message_info.get('conversation') or message_info.get('extendedTextMessage', {}).get('text')
-                phone_number = message_data.get('key', {}).get('remoteJid')
-                from_me = message_data.get('key', {}).get('fromMe', False)
+            # No responde a mensajes propios
+            if from_me:
+                return jsonify({"status": "ignored", "reason": "mensaje propio"}), 200
+            
+            # Inicializar variables
+            text = None
+            image_url = None
+            
+            # Procesar mensaje de texto
+            if message_info.get('conversation'):
+                text = message_info.get('conversation')
+            elif message_info.get('extendedTextMessage'):
+                text = message_info.get('extendedTextMessage', {}).get('text')
+            
+            # Procesar imagen
+            if message_info.get('imageMessage'):
+                image_msg = message_info.get('imageMessage', {})
+                # Obtener caption de la imagen (texto que acompaña la imagen)
+                caption = image_msg.get('caption', '')
+                if caption:
+                    text = caption
                 
-                # No responde a mensajes propios
-                if from_me:
-                    return jsonify({"status": "ignored", "reason": "mensaje propio"}), 200
+                # Obtener URL de la imagen
+                image_url = image_msg.get('url')
                 
-                if text and phone_number:
-                    print(f"Procesando mensaje de {phone_number}: {text}")
-                    
-                    # Obtiene respuesta de ChatGPT
-                    chatgpt_response = get_chatgpt_response(text, phone_number)
-                    
-                    # Envía respuesta por WhatsApp
-                    send_whatsapp_message(phone_number, chatgpt_response)
-                    
-                    return jsonify({
-                        "status": "success",
-                        "message": "Respuesta enviada"
-                    }), 200
+                print(f"Imagen detectada - URL: {image_url}, Caption: {caption}")
+            
+            # Procesar si hay contenido (texto o imagen)
+            if (text or image_url) and phone_number:
+                print(f"Procesando mensaje de {phone_number}")
+                if image_url:
+                    print(f"Con imagen: {image_url}")
+                
+                # Mostrar "escribiendo..." mientras genera la respuesta
+                send_typing_indicator(phone_number)
+                
+                # Obtiene respuesta de ChatGPT (con o sin imagen)
+                chatgpt_response = get_chatgpt_response(text, phone_number, image_url)
+                
+                # Detener "escribiendo..." antes de enviar
+                stop_typing_indicator(phone_number)
+                
+                # Envía respuesta por WhatsApp
+                send_whatsapp_message(phone_number, chatgpt_response)
+                
+                return jsonify({
+                    "status": "success",
+                    "message": "Respuesta enviada",
+                    "had_image": image_url is not None
+                }), 200
         
         return jsonify({"status": "ok"}), 200
         
