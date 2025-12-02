@@ -87,26 +87,74 @@ def is_image_request(text):
     if not text:
         return False
     
-    texto_lower = text.lower()
+    texto_lower = text.lower().strip()
     
-    # Frases que indican solicitud de imagen
-    triggers = [
+    # Frases exactas que indican solicitud de imagen
+    triggers_exactos = [
         'genera una imagen', 'generar una imagen', 'generame una imagen', 'genérame una imagen',
+        'genera la imagen', 'generar la imagen', 'generame la imagen', 'genérame la imagen',
         'crea una imagen', 'crear una imagen', 'creame una imagen', 'créame una imagen',
+        'crea la imagen', 'crear la imagen', 'creame la imagen', 'créame la imagen',
         'dibuja', 'dibújame', 'dibujar',
         'hazme una imagen', 'haz una imagen', 'hacer una imagen',
+        'hazme un dibujo', 'haz un dibujo',
         'quiero una imagen', 'necesito una imagen',
         'genera un dibujo', 'crea un dibujo',
         'imagina y dibuja', 'imagina y genera',
         'puedes generar', 'puedes crear una imagen', 'puedes dibujar',
         'podrías generar', 'podrías crear una imagen', 'podrías dibujar',
         'me generas', 'me creas una imagen', 'me dibujas',
-        'genera imagen', 'crear imagen', 'generar imagen'
+        'genera imagen', 'crear imagen', 'generar imagen',
+        'generame', 'genérame', 'dibujame', 'dibújame',
+        'crea img', 'genera img', 'haz img'
     ]
     
-    for trigger in triggers:
+    for trigger in triggers_exactos:
         if trigger in texto_lower:
             return True
+    
+    # Patrones más flexibles: "genera/crea/dibuja" + "imagen/dibujo/foto/ilustración"
+    palabras_accion = ['genera', 'crea', 'haz', 'hazme', 'dibuja', 'crear', 'generar', 'dibujar', 'hacer']
+    palabras_imagen = ['imagen', 'dibujo', 'foto', 'ilustración', 'ilustracion', 'img', 'picture']
+    
+    for accion in palabras_accion:
+        for imagen in palabras_imagen:
+            if accion in texto_lower and imagen in texto_lower:
+                return True
+    
+    # DETECCIÓN INTELIGENTE: Si empieza con "genera un/una/el/la/al" o similar
+    # Probablemente quiere una imagen de algo
+    patrones_genera = [
+        'genera un ', 'genera una ', 'genera el ', 'genera la ', 'genera al ',
+        'generar un ', 'generar una ', 'generar el ', 'generar la ',
+        'generame un ', 'generame una ', 'genérame un ', 'genérame una ',
+        'crea un ', 'crea una ', 'crea el ', 'crea la ',
+        'crear un ', 'crear una ', 'crear el ', 'crear la ',
+        'creame un ', 'creame una ', 'créame un ', 'créame una ',
+        'hazme un ', 'hazme una ', 'haz un ', 'haz una ',
+        'dibuja un ', 'dibuja una ', 'dibuja el ', 'dibuja la ',
+        'dibujame un ', 'dibujame una ', 'dibújame un ', 'dibújame una ',
+        'quiero un ', 'quiero una ',  # "quiero un gato volando"
+        'necesito un ', 'necesito una ',
+        'imagina un ', 'imagina una ',
+    ]
+    
+    for patron in patrones_genera:
+        if texto_lower.startswith(patron):
+            # Excluir si es claramente algo que NO es imagen
+            exclusiones = ['texto', 'codigo', 'código', 'programa', 'script', 'lista', 
+                          'resumen', 'ensayo', 'documento', 'archivo', 'email', 'correo',
+                          'mensaje', 'respuesta', 'explicación', 'explicacion', 'plan',
+                          'receta', 'horario', 'tabla', 'excel', 'pdf', 'word']
+            
+            es_exclusion = False
+            for excl in exclusiones:
+                if excl in texto_lower:
+                    es_exclusion = True
+                    break
+            
+            if not es_exclusion:
+                return True
     
     return False
 
@@ -514,6 +562,7 @@ def webhook():
                 
                 # Detectar si es una solicitud de imagen
                 es_solicitud_imagen = is_image_request(text)
+                print(f"📋 Análisis del mensaje - Saludo: {es_saludo}, Solicitud imagen: {es_solicitud_imagen}, Texto: {text[:50] if text else 'None'}...")
                 
                 # Verificar si es un usuario nuevo (primera interacción)
                 is_new_user = phone_number not in user_sessions
