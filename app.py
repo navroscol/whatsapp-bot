@@ -59,8 +59,8 @@ Soy tu asistente virtual y estoy aquí para ayudarte con lo que necesites, ya se
     
     return send_whatsapp_message(phone_number, mensaje_bienvenida)
 
-def send_whatsapp_image(phone_number, image_url, caption=""):
-    """Envía una imagen por WhatsApp usando Evolution API"""
+def send_whatsapp_image(phone_number, image_data, caption=""):
+    """Envía una imagen por WhatsApp usando Evolution API (soporta URL o base64)"""
     url = f"{EVOLUTION_API_URL}/message/sendMedia/{INSTANCE_NAME}"
     
     headers = {
@@ -68,12 +68,25 @@ def send_whatsapp_image(phone_number, image_url, caption=""):
         'apikey': EVOLUTION_API_KEY
     }
     
-    data = {
-        "number": phone_number,
-        "mediatype": "image",
-        "media": image_url,
-        "caption": caption
-    }
+    # Detectar si es base64 o URL
+    if image_data.startswith("data:"):
+        # Es base64, extraer solo los datos
+        base64_data = image_data.split(",")[1] if "," in image_data else image_data
+        data = {
+            "number": phone_number,
+            "mediatype": "image",
+            "media": base64_data,
+            "mimetype": "image/jpeg",
+            "caption": caption
+        }
+    else:
+        # Es URL normal
+        data = {
+            "number": phone_number,
+            "mediatype": "image",
+            "media": image_data,
+            "caption": caption
+        }
     
     try:
         response = requests.post(url, json=data, headers=headers)
@@ -169,64 +182,46 @@ def generate_image(prompt):
             return None
         
         headers = {
-            "X-Prodia-Key": PRODIA_API_KEY,
-            "Content-Type": "application/json"
+            "Authorization": f"Bearer {PRODIA_API_KEY}",
+            "Content-Type": "application/json",
+            "Accept": "image/jpeg"
         }
         
-        # Usar Nano Banana Pro (Gemini 3 Pro) a través de Prodia
+        # Usar Nano Banana Pro (Gemini 3 Pro) a través de Prodia v2
         data = {
             "type": "inference.gemini-3-pro.txt2img.v1",
             "config": {
-                "prompt": prompt,
-                "aspect_ratio": "1:1"
+                "prompt": prompt
             }
         }
         
-        # Iniciar generación con la API v2 de Prodia
+        # Endpoint correcto de Prodia v2
         response = requests.post(
-            "https://api.prodia.com/v2/job",
+            "https://inference.prodia.com/v2/job",
             headers=headers,
             json=data,
-            timeout=30
+            timeout=120
         )
         
-        if response.status_code in [200, 201]:
-            result = response.json()
-            job_id = result.get("job")
-            
-            if job_id:
-                print(f"📋 Job creado: {job_id}, esperando resultado...")
-                
-                # Esperar a que termine (máximo 120 segundos para Gemini)
-                for _ in range(60):
-                    time.sleep(2)
-                    
-                    # Verificar estado del job
-                    status_response = requests.get(
-                        f"https://api.prodia.com/v2/job/{job_id}",
-                        headers=headers,
-                        timeout=10
-                    )
-                    
-                    if status_response.status_code == 200:
-                        status_result = status_response.json()
-                        status = status_result.get("status")
-                        
-                        if status == "succeeded":
-                            image_url = status_result.get("imageUrl")
-                            if image_url:
-                                print(f"✅ Imagen generada: {image_url[:50]}...")
-                                return image_url
-                        elif status == "failed":
-                            error = status_result.get("error", "Error desconocido")
-                            print(f"❌ Generación fallida: {error}")
-                            return None
-                
-                print("❌ Timeout esperando la imagen")
-                return None
+        print(f"📋 Respuesta: {response.status_code}")
         
-        print(f"❌ Error en la respuesta: {response.status_code} - {response.text[:200]}")
-        return None
+        if response.status_code == 200:
+            # La respuesta es directamente la imagen
+            # Guardar temporalmente y subir a un servicio de hosting
+            import tempfile
+            import base64
+            
+            # Convertir la imagen a base64 para enviar por WhatsApp
+            image_base64 = base64.b64encode(response.content).decode('utf-8')
+            
+            # Crear URL de datos para la imagen
+            image_data_url = f"data:image/jpeg;base64,{image_base64}"
+            
+            print(f"✅ Imagen generada exitosamente")
+            return image_data_url
+        else:
+            print(f"❌ Error en la respuesta: {response.status_code} - {response.text[:200]}")
+            return None
     
     except Exception as e:
         print(f"❌ Error generando imagen: {e}")
