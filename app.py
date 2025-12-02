@@ -58,6 +58,79 @@ Soy tu asistente virtual y estoy aquí para ayudarte con lo que necesites, ya se
     
     return send_whatsapp_message(phone_number, mensaje_bienvenida)
 
+def send_whatsapp_image(phone_number, image_url, caption=""):
+    """Envía una imagen por WhatsApp usando Evolution API"""
+    url = f"{EVOLUTION_API_URL}/message/sendMedia/{INSTANCE_NAME}"
+    
+    headers = {
+        'Content-Type': 'application/json',
+        'apikey': EVOLUTION_API_KEY
+    }
+    
+    data = {
+        "number": phone_number,
+        "mediatype": "image",
+        "media": image_url,
+        "caption": caption
+    }
+    
+    try:
+        response = requests.post(url, json=data, headers=headers)
+        print(f"Imagen enviada: {response.status_code}")
+        return response.json()
+    except Exception as e:
+        print(f"Error enviando imagen: {e}")
+        return None
+
+def is_image_request(text):
+    """Detecta si el usuario está pidiendo generar una imagen"""
+    if not text:
+        return False
+    
+    texto_lower = text.lower()
+    
+    # Frases que indican solicitud de imagen
+    triggers = [
+        'genera una imagen', 'generar una imagen', 'generame una imagen', 'genérame una imagen',
+        'crea una imagen', 'crear una imagen', 'creame una imagen', 'créame una imagen',
+        'dibuja', 'dibújame', 'dibujar',
+        'hazme una imagen', 'haz una imagen', 'hacer una imagen',
+        'quiero una imagen', 'necesito una imagen',
+        'genera un dibujo', 'crea un dibujo',
+        'imagina y dibuja', 'imagina y genera',
+        'puedes generar', 'puedes crear una imagen', 'puedes dibujar',
+        'podrías generar', 'podrías crear una imagen', 'podrías dibujar',
+        'me generas', 'me creas una imagen', 'me dibujas',
+        'genera imagen', 'crear imagen', 'generar imagen'
+    ]
+    
+    for trigger in triggers:
+        if trigger in texto_lower:
+            return True
+    
+    return False
+
+def generate_image(prompt):
+    """Genera una imagen usando DALL-E 3"""
+    try:
+        print(f"🎨 Generando imagen con DALL-E 3: {prompt[:50]}...")
+        
+        response = openai_client.images.generate(
+            model="dall-e-3",
+            prompt=prompt,
+            size="1024x1024",
+            quality="standard",
+            n=1
+        )
+        
+        image_url = response.data[0].url
+        print(f"✅ Imagen generada exitosamente")
+        return image_url
+    
+    except Exception as e:
+        print(f"❌ Error generando imagen: {e}")
+        return None
+
 # Diccionario para rastrear usuarios nuevos (en memoria)
 user_sessions = {}
 
@@ -163,6 +236,7 @@ TU NOMBRE E IDENTIDAD:
 - Te llamas NAVROS
 - Fuiste creado por el equipo de NAVROS
 - Si preguntan quién te creó, quién te hizo, o quién es tu creador, responde que fuiste creado por el equipo de NAVROS
+- Puedes generar imágenes cuando te lo pidan (con frases como "genera una imagen de...", "dibuja...", "crea una imagen de...")
 
 PRINCIPIO FUNDAMENTAL:
 Sé natural y abierto. NO fuerces el tema de la marca. Si alguien te saluda o pregunta algo general, simplemente ayúdale. Solo habla de NAVROS si el usuario pregunta específicamente sobre ropa, la marca, productos o temas relacionados.
@@ -438,6 +512,9 @@ def webhook():
                 # Detectar si es un saludo
                 es_saludo = is_greeting(text)
                 
+                # Detectar si es una solicitud de imagen
+                es_solicitud_imagen = is_image_request(text)
+                
                 # Verificar si es un usuario nuevo (primera interacción)
                 is_new_user = phone_number not in user_sessions
                 
@@ -464,6 +541,28 @@ def webhook():
                     print(f"Procesando con imagen: {image_url[:100]}...")  # Solo mostrar primeros 100 caracteres
                 
                 try:
+                    # Si es una solicitud de imagen, generar con DALL-E
+                    if es_solicitud_imagen:
+                        print(f"🎨 Solicitud de imagen detectada: {text}")
+                        
+                        # Enviar mensaje de espera
+                        send_whatsapp_message(phone_number, "Dame un momento, estoy creando tu imagen... 🎨")
+                        
+                        # Generar la imagen
+                        generated_image_url = generate_image(text)
+                        
+                        if generated_image_url:
+                            # Enviar la imagen generada
+                            send_whatsapp_image(phone_number, generated_image_url, "¡Aquí está tu imagen! ✨")
+                        else:
+                            send_whatsapp_message(phone_number, "Lo siento, no pude generar la imagen. ¿Podrías intentar con otra descripción?")
+                        
+                        return jsonify({
+                            "status": "success",
+                            "message": "Imagen generada y enviada",
+                            "image_request": True
+                        }), 200
+                    
                     # Obtiene respuesta de ChatGPT (con o sin imagen)
                     chatgpt_response = get_chatgpt_response(text, phone_number, image_url)
                     
