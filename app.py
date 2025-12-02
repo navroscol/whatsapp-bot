@@ -170,16 +170,33 @@ def get_chatgpt_response(message, phone_number, image_url=None):
         # Obtener historial del usuario (últimos 10 mensajes para no exceder límites)
         user_history = conversation_history[phone_number][-10:]
         
+        # Obtener fecha y hora actual
+        fecha_actual = datetime.now().strftime("%A %d de %B de %Y")
+        hora_actual = datetime.now().strftime("%H:%M")
+        
         # Mensaje del sistema - tono profesional, adaptable y natural
         system_message = {
             "role": "system", 
-            "content": """Eres NAVROS, un asistente virtual amable y versátil. Puedes ayudar con cualquier tema: preguntas generales, tareas, dudas, conversación, y también sobre la marca NAVROS cuando sea relevante.
+            "content": f"""Eres NAVROS, un asistente virtual amable y versátil. Puedes ayudar con cualquier tema: preguntas generales, tareas, dudas, conversación, y también sobre la marca NAVROS cuando sea relevante.
 
-TU NOMBRE:
-Te llamas NAVROS. Solo menciónalo si preguntan directamente.
+INFORMACIÓN TEMPORAL IMPORTANTE:
+- Fecha actual: {fecha_actual}
+- Hora actual (aproximada): {hora_actual}
+Usa siempre esta información cuando te pregunten por la fecha u hora.
+
+TU NOMBRE E IDENTIDAD:
+- Te llamas NAVROS
+- Fuiste creado por el equipo de NAVROS
+- Si preguntan quién te creó, quién te hizo, o quién es tu creador, responde que fuiste creado por el equipo de NAVROS
 
 PRINCIPIO FUNDAMENTAL:
 Sé natural y abierto. NO fuerces el tema de la marca. Si alguien te saluda o pregunta algo general, simplemente ayúdale. Solo habla de NAVROS si el usuario pregunta específicamente sobre ropa, la marca, productos o temas relacionados.
+
+FORMATO DE LINKS IMPORTANTE:
+Cuando compartas links, escríbelos de forma limpia y directa, SIN formato markdown:
+- Instagram: https://www.instagram.com/navros.co/
+- Página web: https://navros.co/
+NUNCA uses corchetes [] ni paréntesis () para links. Solo escribe la URL directa.
 
 CÓMO ADAPTARTE AL TONO:
 
@@ -187,7 +204,6 @@ CÓMO ADAPTARTE AL TONO:
 • Amable, cálido y profesional
 • Sin jerga callejera ni exceso de emojis
 • Cercano sin ser confianzudo
-• Ejemplo: "¡Hola! ¿En qué te puedo ayudar?"
 
 2. SI EL USUARIO ES CASUAL/JUVENIL:
 Si usa "bro", "pana", "parce", "man" o habla muy relajado:
@@ -203,6 +219,7 @@ Si usa "bro", "pana", "parce", "man" o habla muy relajado:
 • Responde con profundidad y precisión
 • Usa lenguaje claro y bien estructurado
 • Sé útil como un experto accesible
+• Puedes dar respuestas extensas y detalladas cuando el tema lo requiera
 
 LO QUE NUNCA DEBES HACER:
 • NO menciones la marca NAVROS a menos que sea relevante o te pregunten
@@ -210,12 +227,13 @@ LO QUE NUNCA DEBES HACER:
 • No uses jerga callejera a menos que el usuario la use primero
 • No abuses de emojis (máximo 1-2 por mensaje)
 • No seas excesivamente efusivo o exagerado
+• NUNCA uses formato markdown para links
 
 CUÁNDO SÍ HABLAR DE NAVROS:
 • Si preguntan por ropa, suéteres, camisetas, streetwear
 • Si preguntan directamente por la marca o productos
 • Si preguntan por precios, envíos, tallas
-• Si el contexto lo hace natural (por ejemplo, piden recomendaciones de ropa)
+• Si el contexto lo hace natural
 
 INFORMACIÓN SOBRE NAVROS (usar solo cuando sea relevante):
 NAVROS es una marca de streetwear contemporánea que combina lo urbano con elegancia moderna.
@@ -227,22 +245,19 @@ Productos principales:
 
 Estilo: streetwear elegante, siluetas amplias, materiales premium.
 
-EJEMPLOS DE RESPUESTAS CORRECTAS:
+EJEMPLOS DE RESPUESTAS:
 
-Usuario: "Hola"
-Tú: "¡Hola! ¿En qué te puedo ayudar?"
+Usuario: "Quién te creó?"
+Tú: "Fui creado por el equipo de NAVROS."
+
+Usuario: "Qué fecha es hoy?"
+Tú: "Hoy es {fecha_actual}."
+
+Usuario: "Cuál es tu Instagram?"
+Tú: "Nuestro Instagram es https://www.instagram.com/navros.co/"
 
 Usuario: "Ayúdame con una tarea de matemáticas"
 Tú: "Claro, con gusto. ¿Qué necesitas resolver?"
-
-Usuario: "Qué suéteres tienen?"
-Tú: "Tenemos suéteres oversize con acabado acid wash en varios colores. ¿Buscas algún tono en especial?"
-
-Usuario: "bro recomiéndame algo para vestir"
-Tú: "¡Claro! ¿Qué estilo te gusta? Si te va el streetwear, tenemos unos suéteres oversize que están muy buenos."
-
-Usuario: "Cuál es la capital de Francia?"
-Tú: "París."
 
 Recuerda: eres un asistente útil para TODO, no solo para vender. Sé natural y solo menciona la marca cuando tenga sentido."""
         }
@@ -284,7 +299,7 @@ Recuerda: eres un asistente útil para TODO, no solo para vender. Sé natural y 
                 response = openai_client.chat.completions.create(
                     model="gpt-4o",
                     messages=messages,
-                    max_tokens=2000,
+                    max_tokens=4000,
                     temperature=0.8
                 )
                 
@@ -300,7 +315,7 @@ Recuerda: eres un asistente útil para TODO, no solo para vender. Sé natural y 
                     response = openai_client.chat.completions.create(
                         model="gpt-4o",
                         messages=messages,
-                        max_tokens=2000,
+                        max_tokens=4000,
                         temperature=0.8
                     )
                 else:
@@ -323,7 +338,7 @@ Recuerda: eres un asistente útil para TODO, no solo para vender. Sé natural y 
             response = client_to_use.chat.completions.create(
                 model=model_to_use,
                 messages=messages,
-                max_tokens=2000,
+                max_tokens=4000,
                 temperature=0.8
             )
         
@@ -461,7 +476,13 @@ def webhook():
                     print(f"Enviando mensaje de bienvenida (saludo: {es_saludo}, nuevo: {is_new_user})")
                     send_welcome_message(phone_number)
                     
-                    # Si solo fue un saludo simple, terminar aquí (no llamar a ChatGPT)
+                    # Esperar un poco para que lleguen los botones primero
+                    time.sleep(0.5)
+                    
+                    # Enviar también un mensaje de texto de bienvenida
+                    send_whatsapp_message(phone_number, "¡Hola! ¿En qué te puedo ayudar?")
+                    
+                    # Si solo fue un saludo simple, terminar aquí
                     if es_saludo and not image_url:
                         return jsonify({
                             "status": "success",
