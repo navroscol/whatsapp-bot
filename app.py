@@ -136,21 +136,21 @@ def is_image_request(text):
             if accion in texto_lower and imagen in texto_lower:
                 return True
     
-    # DETECCIÓN INTELIGENTE: Si empieza con "genera un/una/el/la/al" o similar
-    # Probablemente quiere una imagen de algo
+    # DETECCIÓN AMPLIA: Si empieza con "genera", "crea", "dibuja", "hazme" seguido de algo
+    # Asumir que quiere una imagen a menos que sea claramente texto/código
     patrones_genera = [
-        'genera un ', 'genera una ', 'genera el ', 'genera la ', 'genera al ',
-        'generar un ', 'generar una ', 'generar el ', 'generar la ',
-        'generame un ', 'generame una ', 'genérame un ', 'genérame una ',
-        'crea un ', 'crea una ', 'crea el ', 'crea la ',
-        'crear un ', 'crear una ', 'crear el ', 'crear la ',
-        'creame un ', 'creame una ', 'créame un ', 'créame una ',
-        'hazme un ', 'hazme una ', 'haz un ', 'haz una ',
-        'dibuja un ', 'dibuja una ', 'dibuja el ', 'dibuja la ',
-        'dibujame un ', 'dibujame una ', 'dibújame un ', 'dibújame una ',
-        'quiero un ', 'quiero una ',  # "quiero un gato volando"
+        'genera un ', 'genera una ', 'genera el ', 'genera la ', 'genera al ', 'genera a ',
+        'generar un ', 'generar una ', 'generar el ', 'generar la ', 'generar a ',
+        'generame un ', 'generame una ', 'genérame un ', 'genérame una ', 'generame a ', 'genérame a ',
+        'crea un ', 'crea una ', 'crea el ', 'crea la ', 'crea a ',
+        'crear un ', 'crear una ', 'crear el ', 'crear la ', 'crear a ',
+        'creame un ', 'creame una ', 'créame un ', 'créame una ', 'creame a ', 'créame a ',
+        'hazme un ', 'hazme una ', 'haz un ', 'haz una ', 'hazme a ', 'haz a ',
+        'dibuja un ', 'dibuja una ', 'dibuja el ', 'dibuja la ', 'dibuja a ',
+        'dibujame un ', 'dibujame una ', 'dibújame un ', 'dibújame una ', 'dibujame a ', 'dibújame a ',
+        'quiero un ', 'quiero una ', 'quiero a ',
         'necesito un ', 'necesito una ',
-        'imagina un ', 'imagina una ',
+        'imagina un ', 'imagina una ', 'imagina a ',
     ]
     
     for patron in patrones_genera:
@@ -159,7 +159,8 @@ def is_image_request(text):
             exclusiones = ['texto', 'codigo', 'código', 'programa', 'script', 'lista', 
                           'resumen', 'ensayo', 'documento', 'archivo', 'email', 'correo',
                           'mensaje', 'respuesta', 'explicación', 'explicacion', 'plan',
-                          'receta', 'horario', 'tabla', 'excel', 'pdf', 'word']
+                          'receta', 'horario', 'tabla', 'excel', 'pdf', 'word',
+                          'funcion', 'función', 'variable', 'clase', 'método', 'metodo']
             
             es_exclusion = False
             for excl in exclusiones:
