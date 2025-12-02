@@ -12,6 +12,7 @@ app = Flask(__name__)
 # Configuración de APIs
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
 XAI_API_KEY = os.environ.get('XAI_API_KEY')  # API key de Grok (xAI)
+PRODIA_API_KEY = os.environ.get('PRODIA_API_KEY')  # API key de Prodia (sin censura)
 
 # Cliente de OpenAI (para imágenes con GPT-4o)
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
@@ -159,24 +160,78 @@ def is_image_request(text):
     return False
 
 def generate_image(prompt):
-    """Genera una imagen usando DALL-E 3"""
+    """Genera una imagen usando Prodia con Nano Banana Pro (Gemini 3 Pro)"""
     try:
-        print(f"🎨 Generando imagen con DALL-E 3: {prompt[:50]}...")
+        print(f"🎨 Generando imagen con Nano Banana Pro: {prompt[:50]}...")
         
-        response = openai_client.images.generate(
-            model="dall-e-3",
-            prompt=prompt,
-            size="1024x1024",
-            quality="standard",
-            n=1
+        if not PRODIA_API_KEY:
+            print("❌ PRODIA_API_KEY no configurado")
+            return None
+        
+        headers = {
+            "X-Prodia-Key": PRODIA_API_KEY,
+            "Content-Type": "application/json"
+        }
+        
+        # Usar Nano Banana Pro (Gemini 3 Pro) a través de Prodia
+        data = {
+            "type": "inference.gemini-3-pro.txt2img.v1",
+            "config": {
+                "prompt": prompt,
+                "aspect_ratio": "1:1"
+            }
+        }
+        
+        # Iniciar generación con la API v2 de Prodia
+        response = requests.post(
+            "https://api.prodia.com/v2/job",
+            headers=headers,
+            json=data,
+            timeout=30
         )
         
-        image_url = response.data[0].url
-        print(f"✅ Imagen generada exitosamente")
-        return image_url
+        if response.status_code in [200, 201]:
+            result = response.json()
+            job_id = result.get("job")
+            
+            if job_id:
+                print(f"📋 Job creado: {job_id}, esperando resultado...")
+                
+                # Esperar a que termine (máximo 120 segundos para Gemini)
+                for _ in range(60):
+                    time.sleep(2)
+                    
+                    # Verificar estado del job
+                    status_response = requests.get(
+                        f"https://api.prodia.com/v2/job/{job_id}",
+                        headers=headers,
+                        timeout=10
+                    )
+                    
+                    if status_response.status_code == 200:
+                        status_result = status_response.json()
+                        status = status_result.get("status")
+                        
+                        if status == "succeeded":
+                            image_url = status_result.get("imageUrl")
+                            if image_url:
+                                print(f"✅ Imagen generada: {image_url[:50]}...")
+                                return image_url
+                        elif status == "failed":
+                            error = status_result.get("error", "Error desconocido")
+                            print(f"❌ Generación fallida: {error}")
+                            return None
+                
+                print("❌ Timeout esperando la imagen")
+                return None
+        
+        print(f"❌ Error en la respuesta: {response.status_code} - {response.text[:200]}")
+        return None
     
     except Exception as e:
         print(f"❌ Error generando imagen: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 # Diccionario para rastrear usuarios nuevos (en memoria)
