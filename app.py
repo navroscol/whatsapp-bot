@@ -49,39 +49,14 @@ def send_whatsapp_message(phone_number, message):
         return None
 
 def send_welcome_message(phone_number):
-    """Envía mensaje de bienvenida con botones interactivos"""
-    url = f"{EVOLUTION_API_URL}/message/sendButtons/{INSTANCE_NAME}"
+    """Envía mensaje de bienvenida amigable y cordial"""
+    mensaje_bienvenida = """¡Hola! 👋 Bienvenido a NAVROS.
+
+Soy tu asistente virtual y estoy aquí para ayudarte con lo que necesites, ya sea información sobre nuestra ropa, resolver dudas o simplemente conversar.
+
+¿En qué te puedo ayudar hoy?"""
     
-    headers = {
-        'Content-Type': 'application/json',
-        'apikey': EVOLUTION_API_KEY
-    }
-    
-    data = {
-        "number": phone_number,
-        "title": "🖤 ¡Bienvenido a NAVROS!",
-        "description": "Streetwear elegante con actitud. Explora nuestras redes:",
-        "buttons": [
-            {
-                "type": "url",
-                "displayText": "📸 Instagram",
-                "url": "https://www.instagram.com/navros.co/"
-            },
-            {
-                "type": "url", 
-                "displayText": "🌐 Página Web",
-                "url": "https://navros.co/"
-            }
-        ]
-    }
-    
-    try:
-        response = requests.post(url, json=data, headers=headers)
-        print(f"Welcome message sent: {response.status_code}")
-        return response.json()
-    except Exception as e:
-        print(f"Error enviando mensaje de bienvenida: {e}")
-        return None
+    return send_whatsapp_message(phone_number, mensaje_bienvenida)
 
 # Diccionario para rastrear usuarios nuevos (en memoria)
 user_sessions = {}
@@ -475,12 +450,6 @@ def webhook():
                 if es_saludo or is_new_user:
                     print(f"Enviando mensaje de bienvenida (saludo: {es_saludo}, nuevo: {is_new_user})")
                     send_welcome_message(phone_number)
-                    
-                    # Esperar un poco para que lleguen los botones primero
-                    time.sleep(0.5)
-                    
-                    # Enviar también un mensaje de texto de bienvenida
-                    send_whatsapp_message(phone_number, "¡Hola! ¿En qué te puedo ayudar?")
                     
                     # Si solo fue un saludo simple, terminar aquí
                     if es_saludo and not image_url:
