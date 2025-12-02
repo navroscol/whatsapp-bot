@@ -50,14 +50,33 @@ def send_whatsapp_message(phone_number, message):
         return None
 
 def send_welcome_message(phone_number):
-    """Envía mensaje de bienvenida amigable y cordial"""
-    mensaje_bienvenida = """¡Hola! 👋 Bienvenido a NAVROS.
-
-Soy tu asistente virtual y estoy aquí para ayudarte con lo que necesites, ya sea información sobre nuestra ropa, resolver dudas o simplemente conversar.
-
-¿En qué te puedo ayudar hoy?"""
-    
-    return send_whatsapp_message(phone_number, mensaje_bienvenida)
+    """Envía mensaje de bienvenida generado por IA"""
+    # Usar Grok para generar un saludo natural y variado
+    try:
+        if grok_client:
+            response = grok_client.chat.completions.create(
+                model="grok-3-fast",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Eres NAVROS, un asistente virtual amable. Genera un saludo de bienvenida corto, natural y cálido (máximo 2 oraciones). No menciones productos ni vendas nada. Solo saluda y pregunta en qué puedes ayudar. Varía el saludo para que no sea siempre igual. Puedes usar máximo 1 emoji."
+                    },
+                    {
+                        "role": "user",
+                        "content": "Genera un saludo de bienvenida"
+                    }
+                ],
+                max_tokens=100,
+                temperature=0.9
+            )
+            mensaje = response.choices[0].message.content
+        else:
+            mensaje = "¡Hola! ¿En qué te puedo ayudar?"
+        
+        return send_whatsapp_message(phone_number, mensaje)
+    except Exception as e:
+        print(f"Error generando bienvenida: {e}")
+        return send_whatsapp_message(phone_number, "¡Hola! ¿En qué te puedo ayudar?")
 
 def send_whatsapp_image(phone_number, image_data, caption=""):
     """Envía una imagen por WhatsApp usando Evolution API (soporta URL o base64)"""
@@ -103,6 +122,24 @@ def is_image_request(text):
     
     texto_lower = text.lower().strip()
     
+    # PRIMERO: Excluir si claramente NO es una imagen
+    exclusiones = [
+        'texto', 'codigo', 'código', 'programa', 'script', 'lista', 
+        'resumen', 'ensayo', 'documento', 'archivo', 'email', 'correo',
+        'mensaje', 'respuesta', 'explicación', 'explicacion', 'plan',
+        'receta', 'horario', 'tabla', 'excel', 'pdf', 'word',
+        'funcion', 'función', 'variable', 'clase', 'método', 'metodo',
+        'párrafo', 'parrafo', 'oracion', 'oración', 'frase', 'historia',
+        'cuento', 'poema', 'canción', 'cancion', 'letra', 'análisis', 'analisis',
+        'informe', 'reporte', 'carta', 'nota', 'apunte', 'tarea',
+        'pregunta', 'quiz', 'examen', 'ejercicio', 'problema de',
+        'sorteo', 'número', 'numero', 'aleatorio', 'random', 'simulacion', 'simulación'
+    ]
+    
+    for excl in exclusiones:
+        if excl in texto_lower:
+            return False
+    
     # Frases exactas que indican solicitud de imagen
     triggers_exactos = [
         'genera una imagen', 'generar una imagen', 'generame una imagen', 'genérame una imagen',
@@ -120,67 +157,46 @@ def is_image_request(text):
         'me generas', 'me creas una imagen', 'me dibujas',
         'genera imagen', 'crear imagen', 'generar imagen',
         'generame', 'genérame', 'dibujame', 'dibújame',
-        'crea img', 'genera img', 'haz img'
+        'crea img', 'genera img', 'haz img',
+        'genera una foto', 'crea una foto', 'hazme una foto'
     ]
     
     for trigger in triggers_exactos:
         if trigger in texto_lower:
             return True
     
-    # Patrones más flexibles: "genera/crea/dibuja" + "imagen/dibujo/foto/ilustración"
+    # Patrones: "genera/crea/dibuja" + "imagen/dibujo/foto/ilustración"
     palabras_accion = ['genera', 'crea', 'haz', 'hazme', 'dibuja', 'crear', 'generar', 'dibujar', 'hacer']
-    palabras_imagen = ['imagen', 'dibujo', 'foto', 'ilustración', 'ilustracion', 'img', 'picture']
+    palabras_imagen = ['imagen', 'dibujo', 'foto', 'ilustración', 'ilustracion', 'img', 'picture', 'retrato']
     
     for accion in palabras_accion:
         for imagen in palabras_imagen:
             if accion in texto_lower and imagen in texto_lower:
                 return True
     
-    # DETECCIÓN AMPLIA: Si empieza con "genera", "crea", "dibuja", "hazme" seguido de algo
-    # Asumir que quiere una imagen a menos que sea claramente texto/código
-    patrones_genera = [
-        'genera un ', 'genera una ', 'genera el ', 'genera la ', 'genera al ', 'genera a ',
-        'generar un ', 'generar una ', 'generar el ', 'generar la ', 'generar a ',
-        'generame un ', 'generame una ', 'genérame un ', 'genérame una ', 'generame a ', 'genérame a ',
-        'crea un ', 'crea una ', 'crea el ', 'crea la ', 'crea a ',
-        'crear un ', 'crear una ', 'crear el ', 'crear la ', 'crear a ',
-        'creame un ', 'creame una ', 'créame un ', 'créame una ', 'creame a ', 'créame a ',
-        'hazme un ', 'hazme una ', 'haz un ', 'haz una ', 'hazme a ', 'haz a ',
-        'dibuja un ', 'dibuja una ', 'dibuja el ', 'dibuja la ', 'dibuja a ',
-        'dibujame un ', 'dibujame una ', 'dibújame un ', 'dibújame una ', 'dibujame a ', 'dibújame a ',
-        'quiero un ', 'quiero una ', 'quiero a ',
-        'necesito un ', 'necesito una ',
-        'imagina un ', 'imagina una ', 'imagina a ',
+    # Patrones específicos para personas/personajes (genera a X, dibuja a Y)
+    patrones_persona = [
+        'genera a ', 'crea a ', 'dibuja a ', 'hazme a ', 'haz a ',
+        'generame a ', 'genérame a ', 'creame a ', 'créame a ',
+        'dibujame a ', 'dibújame a '
     ]
     
-    for patron in patrones_genera:
+    for patron in patrones_persona:
         if texto_lower.startswith(patron):
-            # Excluir si es claramente algo que NO es imagen
-            exclusiones = ['texto', 'codigo', 'código', 'programa', 'script', 'lista', 
-                          'resumen', 'ensayo', 'documento', 'archivo', 'email', 'correo',
-                          'mensaje', 'respuesta', 'explicación', 'explicacion', 'plan',
-                          'receta', 'horario', 'tabla', 'excel', 'pdf', 'word',
-                          'funcion', 'función', 'variable', 'clase', 'método', 'metodo']
-            
-            es_exclusion = False
-            for excl in exclusiones:
-                if excl in texto_lower:
-                    es_exclusion = True
-                    break
-            
-            if not es_exclusion:
-                return True
+            return True
     
     return False
 
 def generate_image(prompt):
     """Genera una imagen usando Prodia con Nano Banana Pro (Gemini 3 Pro)"""
     try:
-        print(f"🎨 Generando imagen con Nano Banana Pro: {prompt[:50]}...")
+        print(f"🎨 Generando imagen con Nano Banana Pro: {prompt[:100]}...")
         
         if not PRODIA_API_KEY:
             print("❌ PRODIA_API_KEY no configurado")
             return None
+        
+        print(f"🔑 API Key presente: {PRODIA_API_KEY[:20]}...")
         
         headers = {
             "Authorization": f"Bearer {PRODIA_API_KEY}",
@@ -196,6 +212,9 @@ def generate_image(prompt):
             }
         }
         
+        print(f"📤 Enviando request a Prodia...")
+        print(f"📤 Data: {data}")
+        
         # Endpoint correcto de Prodia v2
         response = requests.post(
             "https://inference.prodia.com/v2/job",
@@ -204,30 +223,44 @@ def generate_image(prompt):
             timeout=120
         )
         
-        print(f"📋 Respuesta: {response.status_code}")
+        print(f"📋 Respuesta Status: {response.status_code}")
+        print(f"📋 Respuesta Headers: {dict(response.headers)}")
         
         if response.status_code == 200:
-            # La respuesta es directamente la imagen
-            # Guardar temporalmente y subir a un servicio de hosting
-            import tempfile
-            import base64
+            content_type = response.headers.get('content-type', '')
+            print(f"📋 Content-Type: {content_type}")
             
-            # Convertir la imagen a base64 para enviar por WhatsApp
-            image_base64 = base64.b64encode(response.content).decode('utf-8')
-            
-            # Crear URL de datos para la imagen
-            image_data_url = f"data:image/jpeg;base64,{image_base64}"
-            
-            print(f"✅ Imagen generada exitosamente")
-            return image_data_url
+            if 'image' in content_type:
+                # La respuesta es directamente la imagen
+                image_base64 = base64.b64encode(response.content).decode('utf-8')
+                print(f"✅ Imagen generada exitosamente ({len(image_base64)} chars base64)")
+                return f"data:image/jpeg;base64,{image_base64}"
+            else:
+                # Puede ser JSON con URL
+                try:
+                    result = response.json()
+                    print(f"📋 Respuesta JSON: {result}")
+                    if 'imageUrl' in result:
+                        return result['imageUrl']
+                    elif 'url' in result:
+                        return result['url']
+                except:
+                    pass
+                
+                # Intentar como imagen de todas formas
+                image_base64 = base64.b64encode(response.content).decode('utf-8')
+                print(f"✅ Tratando respuesta como imagen ({len(image_base64)} chars)")
+                return f"data:image/jpeg;base64,{image_base64}"
         else:
-            print(f"❌ Error en la respuesta: {response.status_code} - {response.text[:200]}")
+            print(f"❌ Error en la respuesta: {response.status_code}")
+            print(f"❌ Response body: {response.text[:500]}")
             return None
     
     except Exception as e:
         print(f"❌ Error generando imagen: {e}")
         import traceback
         traceback.print_exc()
+        return None
         return None
 
 # Diccionario para rastrear usuarios nuevos (en memoria)
@@ -615,54 +648,50 @@ def webhook():
                 es_solicitud_imagen = is_image_request(text)
                 print(f"📋 Análisis del mensaje - Saludo: {es_saludo}, Solicitud imagen: {es_solicitud_imagen}, Texto: {text[:50] if text else 'None'}...")
                 
-                # Verificar si es un usuario nuevo (primera interacción)
+                # Verificar si es un usuario nuevo (primera interacción en esta sesión)
                 is_new_user = phone_number not in user_sessions
                 
                 if is_new_user:
-                    print(f"Nuevo usuario detectado: {phone_number}")
-                    # Marcar usuario como visto
+                    print(f"Nuevo usuario en esta sesión: {phone_number}")
                     user_sessions[phone_number] = True
                 
-                # Enviar mensaje de bienvenida si es saludo O usuario nuevo
-                if es_saludo or is_new_user:
-                    print(f"Enviando mensaje de bienvenida (saludo: {es_saludo}, nuevo: {is_new_user})")
-                    send_welcome_message(phone_number)
+                # PRIMERO: Si es solicitud de imagen, procesarla directamente (sin bienvenida)
+                if es_solicitud_imagen:
+                    print(f"🎨 Solicitud de imagen detectada: {text}")
                     
-                    # Si solo fue un saludo simple, terminar aquí
-                    if es_saludo and not image_url:
-                        return jsonify({
-                            "status": "success",
-                            "message": "Mensaje de bienvenida enviado",
-                            "had_image": False,
-                            "greeting": True
-                        }), 200
+                    # Enviar mensaje de espera
+                    send_whatsapp_message(phone_number, "Dame un momento, estoy creando tu imagen... 🎨")
+                    
+                    # Generar la imagen
+                    generated_image_url = generate_image(text)
+                    
+                    if generated_image_url:
+                        # Enviar la imagen generada
+                        send_whatsapp_image(phone_number, generated_image_url, "¡Aquí está tu imagen! ✨")
+                    else:
+                        send_whatsapp_message(phone_number, "Lo siento, no pude generar la imagen. ¿Podrías intentar con otra descripción?")
+                    
+                    return jsonify({
+                        "status": "success",
+                        "message": "Imagen generada y enviada",
+                        "image_request": True
+                    }), 200
+                
+                # SEGUNDO: Si es solo un saludo simple, enviar bienvenida
+                if es_saludo and not image_url:
+                    print(f"Enviando mensaje de bienvenida (saludo detectado)")
+                    send_welcome_message(phone_number)
+                    return jsonify({
+                        "status": "success",
+                        "message": "Mensaje de bienvenida enviado",
+                        "had_image": False,
+                        "greeting": True
+                    }), 200
                 
                 if image_url:
-                    print(f"Procesando con imagen: {image_url[:100]}...")  # Solo mostrar primeros 100 caracteres
+                    print(f"Procesando con imagen: {image_url[:100]}...")
                 
                 try:
-                    # Si es una solicitud de imagen, generar con DALL-E
-                    if es_solicitud_imagen:
-                        print(f"🎨 Solicitud de imagen detectada: {text}")
-                        
-                        # Enviar mensaje de espera
-                        send_whatsapp_message(phone_number, "Dame un momento, estoy creando tu imagen... 🎨")
-                        
-                        # Generar la imagen
-                        generated_image_url = generate_image(text)
-                        
-                        if generated_image_url:
-                            # Enviar la imagen generada
-                            send_whatsapp_image(phone_number, generated_image_url, "¡Aquí está tu imagen! ✨")
-                        else:
-                            send_whatsapp_message(phone_number, "Lo siento, no pude generar la imagen. ¿Podrías intentar con otra descripción?")
-                        
-                        return jsonify({
-                            "status": "success",
-                            "message": "Imagen generada y enviada",
-                            "image_request": True
-                        }), 200
-                    
                     # Obtiene respuesta de ChatGPT (con o sin imagen)
                     chatgpt_response = get_chatgpt_response(text, phone_number, image_url)
                     
