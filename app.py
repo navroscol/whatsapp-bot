@@ -59,7 +59,7 @@ def send_welcome_message(phone_number):
                 messages=[
                     {
                         "role": "system",
-                        "content": "Eres NAVROS, un asistente virtual amable. Genera un saludo de bienvenida corto, natural y cálido (máximo 2 oraciones). No menciones productos ni vendas nada. Solo saluda y pregunta en qué puedes ayudar. Varía el saludo para que no sea siempre igual. Puedes usar máximo 1 emoji."
+                        "content": "Eres NAVROS, un asistente virtual amable. Genera un saludo de bienvenida corto, natural y cálido (máximo 7 oraciones). No menciones productos ni vendas nada. Sólo saluda, da la bienvenida a NAVROS y pregunta en qué puedes ayudar. Varía el saludo para que no sea siempre igual. Puedes usar máximo 1 emoji."
                     },
                     {
                         "role": "user",
