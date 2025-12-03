@@ -122,7 +122,48 @@ def is_image_request(text):
     
     texto_lower = text.lower().strip()
     
-    # PRIMERO: Excluir si claramente NO es una imagen
+    # PRIMERO: Detectar frases que CLARAMENTE son solicitudes de imagen
+    triggers_imagen_fuertes = [
+        'genera una imagen', 'generar una imagen', 'generame una imagen', 'genérame una imagen',
+        'genera la imagen', 'generar la imagen', 'generame la imagen', 'genérame la imagen',
+        'crea una imagen', 'crear una imagen', 'creame una imagen', 'créame una imagen',
+        'genera una foto', 'crea una foto', 'hazme una foto',
+        'genera un logo', 'crea un logo', 'genera un logotipo', 'crea un logotipo',
+        'dibuja', 'dibújame', 'dibujar',
+        'hazme una imagen', 'haz una imagen',
+        'hazme un dibujo', 'haz un dibujo',
+        'quiero una imagen', 'necesito una imagen',
+        'genera un dibujo', 'crea un dibujo',
+        'genera imagen', 'crear imagen', 'generar imagen',
+        'dibujame', 'dibújame',
+        'crea img', 'genera img', 'haz img'
+    ]
+    
+    for trigger in triggers_imagen_fuertes:
+        if trigger in texto_lower:
+            return True
+    
+    # Patrones para personas/personajes (genera a X, dibuja a Y)
+    patrones_persona = [
+        'genera a ', 'crea a ', 'dibuja a ', 'hazme a ', 'haz a ',
+        'generame a ', 'genérame a ', 'creame a ', 'créame a ',
+        'dibujame a ', 'dibújame a '
+    ]
+    
+    for patron in patrones_persona:
+        if texto_lower.startswith(patron):
+            return True
+    
+    # Patrones: acción + palabra de imagen
+    palabras_accion = ['genera', 'crea', 'haz', 'hazme', 'dibuja']
+    palabras_imagen = ['imagen', 'dibujo', 'foto', 'ilustración', 'ilustracion', 'img', 'retrato', 'logo', 'logotipo']
+    
+    for accion in palabras_accion:
+        for imagen in palabras_imagen:
+            if accion in texto_lower and imagen in texto_lower:
+                return True
+    
+    # Si NO es claramente imagen, verificar exclusiones para otros patrones
     exclusiones = [
         'texto', 'codigo', 'código', 'programa', 'script', 'lista', 
         'resumen', 'ensayo', 'documento', 'archivo', 'email', 'correo',
@@ -136,54 +177,13 @@ def is_image_request(text):
         'sorteo', 'número', 'numero', 'aleatorio', 'random', 'simulacion', 'simulación'
     ]
     
-    for excl in exclusiones:
-        if excl in texto_lower:
-            return False
-    
-    # Frases exactas que indican solicitud de imagen
-    triggers_exactos = [
-        'genera una imagen', 'generar una imagen', 'generame una imagen', 'genérame una imagen',
-        'genera la imagen', 'generar la imagen', 'generame la imagen', 'genérame la imagen',
-        'crea una imagen', 'crear una imagen', 'creame una imagen', 'créame una imagen',
-        'crea la imagen', 'crear la imagen', 'creame la imagen', 'créame la imagen',
-        'dibuja', 'dibújame', 'dibujar',
-        'hazme una imagen', 'haz una imagen', 'hacer una imagen',
-        'hazme un dibujo', 'haz un dibujo',
-        'quiero una imagen', 'necesito una imagen',
-        'genera un dibujo', 'crea un dibujo',
-        'imagina y dibuja', 'imagina y genera',
-        'puedes generar', 'puedes crear una imagen', 'puedes dibujar',
-        'podrías generar', 'podrías crear una imagen', 'podrías dibujar',
-        'me generas', 'me creas una imagen', 'me dibujas',
-        'genera imagen', 'crear imagen', 'generar imagen',
-        'generame', 'genérame', 'dibujame', 'dibújame',
-        'crea img', 'genera img', 'haz img',
-        'genera una foto', 'crea una foto', 'hazme una foto'
-    ]
-    
-    for trigger in triggers_exactos:
-        if trigger in texto_lower:
-            return True
-    
-    # Patrones: "genera/crea/dibuja" + "imagen/dibujo/foto/ilustración"
-    palabras_accion = ['genera', 'crea', 'haz', 'hazme', 'dibuja', 'crear', 'generar', 'dibujar', 'hacer']
-    palabras_imagen = ['imagen', 'dibujo', 'foto', 'ilustración', 'ilustracion', 'img', 'picture', 'retrato']
-    
-    for accion in palabras_accion:
-        for imagen in palabras_imagen:
-            if accion in texto_lower and imagen in texto_lower:
-                return True
-    
-    # Patrones específicos para personas/personajes (genera a X, dibuja a Y)
-    patrones_persona = [
-        'genera a ', 'crea a ', 'dibuja a ', 'hazme a ', 'haz a ',
-        'generame a ', 'genérame a ', 'creame a ', 'créame a ',
-        'dibujame a ', 'dibújame a '
-    ]
-    
-    for patron in patrones_persona:
-        if texto_lower.startswith(patron):
-            return True
+    # Solo aplicar exclusiones si el mensaje empieza con "genera un/una" sin palabra de imagen
+    if texto_lower.startswith(('genera un ', 'genera una ', 'crea un ', 'crea una ')):
+        for excl in exclusiones:
+            if excl in texto_lower:
+                return False
+        # Si no hay exclusión y empieza con genera/crea, probablemente es imagen
+        return True
     
     return False
 
