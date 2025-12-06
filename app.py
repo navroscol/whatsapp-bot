@@ -8,109 +8,95 @@ import json
 from datetime import datetime, timedelta
 import hashlib
 import secrets
-import psycopg2
-from psycopg2.extras import RealDictCursor
+
+# === CAMBIO PRINCIPAL: psycopg2 → psycopg (versión 3) ===
+import psycopg
+from psycopg.rows import dict_row        # ← esto reemplaza RealDictCursor
 from functools import wraps
 
 app = Flask(__name__)
 
 # Configuración de APIs
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
-XAI_API_KEY = os.environ.get('XAI_API_KEY')  # API key de Grok (xAI)
-PRODIA_API_KEY = os.environ.get('PRODIA_API_KEY')  # API key de Prodia (sin censura)
+XAI_API_KEY = os.environ.get('XAI_API_KEY')
+PRODIA_API_KEY = os.environ.get('PRODIA_API_KEY')
 
-# Cliente de OpenAI (para imágenes con GPT-4o)
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
-# Cliente de Grok (para texto con grok-4-fast-reasoning)
 grok_client = OpenAI(
     api_key=XAI_API_KEY,
     base_url="https://api.x.ai/v1"
 ) if XAI_API_KEY else None
 
-# Configuración de Evolution API
 EVOLUTION_API_URL = os.environ.get('EVOLUTION_API_URL')
 EVOLUTION_API_KEY = os.environ.get('EVOLUTION_API_KEY')
 INSTANCE_NAME = os.environ.get('INSTANCE_NAME', 'my-whatsapp')
 
-# Configuración de Base de Datos PostgreSQL
 DATABASE_URL = os.environ.get('DATABASE_URL')
-
-# Google OAuth Config
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID')
 
 # ============================================
-# BASE DE DATOS Y AUTENTICACIÓN
+# BASE DE DATOS (psycopg 3)
 # ============================================
 
 def get_db_connection():
-    """Obtiene conexión a PostgreSQL"""
     try:
-        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
         return conn
     except Exception as e:
-        print(f"❌ Error conectando a DB: {e}")
+        print(f"Error conectando a DB: {e}")
         return None
 
 def init_db():
-    """Inicializa las tablas de usuarios si no existen"""
     conn = get_db_connection()
     if not conn:
         return False
-    
     try:
-        cur = conn.cursor()
-        
-        # Tabla de usuarios
-        cur.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                email VARCHAR(255) UNIQUE NOT NULL,
-                password_hash VARCHAR(255),
-                name VARCHAR(255),
-                google_id VARCHAR(255) UNIQUE,
-                profile_picture TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_login TIMESTAMP,
-                is_active BOOLEAN DEFAULT TRUE
-            )
-        ''')
-        
-        # Tabla de tokens de sesión
-        cur.execute('''
-            CREATE TABLE IF NOT EXISTS auth_tokens (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                token VARCHAR(255) UNIQUE NOT NULL,
-                device_info TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                expires_at TIMESTAMP NOT NULL,
-                is_valid BOOLEAN DEFAULT TRUE
-            )
-        ''')
-        
-        # Índices para mejor rendimiento
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_tokens_token ON auth_tokens(token)')
-        
+        with conn.cursor() as cur:
+            cur.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    email VARCHAR(255) UNIQUE NOT NULL,
+                    password_hash VARCHAR(255),
+                    name VARCHAR(255),
+                    google_id VARCHAR(255) UNIQUE,
+                    profile_picture TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_login TIMESTAMP,
+                    is_active BOOLEAN DEFAULT TRUE
+                )
+            ''')
+            cur.execute('''
+                CREATE TABLE IF NOT EXISTS auth_tokens (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                    token VARCHAR(255) UNIQUE NOT NULL,
+                    device_info TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TIMESTAMP NOT NULL,
+                    is_valid BOOLEAN DEFAULT TRUE
+                )
+            ''')
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)')
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id)')
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_tokens_token ON auth_tokens(token)')
         conn.commit()
-        cur.close()
-        conn.close()
-        print("✅ Base de datos inicializada correctamente")
+        print("Base de datos inicializada correctamente")
         return True
     except Exception as e:
-        print(f"❌ Error inicializando DB: {e}")
+        print(f"Error inicializando DB: {e}")
+        conn.rollback()
         return False
+    finally:
+        conn.close()
 
+# Funciones de seguridad (sin cambios)
 def hash_password(password):
-    """Genera hash seguro de contraseña"""
     salt = secrets.token_hex(16)
     hash_obj = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000)
     return f"{salt}${hash_obj.hex()}"
 
 def verify_password(password, password_hash):
-    """Verifica si la contraseña coincide con el hash"""
     try:
         salt, hash_value = password_hash.split('$')
         hash_obj = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000)
@@ -119,93 +105,73 @@ def verify_password(password, password_hash):
         return False
 
 def generate_token():
-    """Genera un token de autenticación seguro"""
     return secrets.token_urlsafe(32)
 
 def create_auth_token(user_id, device_info=None, days_valid=30):
-    """Crea un nuevo token de autenticación"""
     conn = get_db_connection()
-    if not conn:
-        return None
-    
+    if not conn: return None
     try:
-        cur = conn.cursor()
-        token = generate_token()
-        expires_at = datetime.now() + timedelta(days=days_valid)
-        
-        cur.execute('''
-            INSERT INTO auth_tokens (user_id, token, device_info, expires_at)
-            VALUES (%s, %s, %s, %s)
-            RETURNING token
-        ''', (user_id, token, device_info, expires_at))
-        
-        conn.commit()
-        cur.close()
-        conn.close()
-        return token
+        with conn.cursor() as cur:
+            token = generate_token()
+            expires_at = datetime.now() + timedelta(days=days_valid)
+            cur.execute('''
+                INSERT INTO auth_tokens (user_id, token, device_info, expires_at)
+                VALUES (%s, %s, %s, %s) RETURNING token
+            ''', (user_id, token, device_info, expires_at))
+            result = cur.fetchone()
+            conn.commit()
+            return result['token']
     except Exception as e:
-        print(f"❌ Error creando token: {e}")
+        print(f"Error creando token: {e}")
         return None
+    finally:
+        conn.close()
 
 def validate_token(token):
-    """Valida un token y retorna el usuario si es válido"""
     conn = get_db_connection()
-    if not conn:
-        return None
-    
+    if not conn: return None
     try:
-        cur = conn.cursor()
-        cur.execute('''
-            SELECT u.id, u.email, u.name, u.profile_picture, u.google_id
-            FROM auth_tokens t
-            JOIN users u ON t.user_id = u.id
-            WHERE t.token = %s 
-            AND t.is_valid = TRUE 
-            AND t.expires_at > NOW()
-            AND u.is_active = TRUE
-        ''', (token,))
-        
-        user = cur.fetchone()
-        cur.close()
-        conn.close()
-        return dict(user) if user else None
+        with conn.cursor() as cur:
+            cur.execute('''
+                SELECT u.id, u.email, u.name, u.profile_picture, u.google_id
+                FROM auth_tokens t
+                JOIN users u ON t.user_id = u.id
+                WHERE t.token = %s AND t.is_valid = TRUE AND t.expires_at > NOW() AND u.is_active = TRUE
+            ''', (token,))
+            user = cur.fetchone()
+            return dict(user) if user else None
     except Exception as e:
-        print(f"❌ Error validando token: {e}")
+        print(f"Error validando token: {e}")
         return None
+    finally:
+        conn.close()
 
 def require_auth(f):
-    """Decorador para requerir autenticación"""
     @wraps(f)
     def decorated(*args, **kwargs):
         token = request.headers.get('Authorization', '').replace('Bearer ', '')
-        
         if not token:
             return jsonify({"error": "Token requerido"}), 401
-        
         user = validate_token(token)
         if not user:
             return jsonify({"error": "Token inválido o expirado"}), 401
-        
         request.current_user = user
         return f(*args, **kwargs)
     return decorated
 
 def optional_auth(f):
-    """Decorador para autenticación opcional (permite usuarios no logueados)"""
     @wraps(f)
     def decorated(*args, **kwargs):
         token = request.headers.get('Authorization', '').replace('Bearer ', '')
-        
         if token:
             user = validate_token(token)
             request.current_user = user
         else:
             request.current_user = None
-        
         return f(*args, **kwargs)
     return decorated
 
-# Inicializar base de datos al arrancar
+# Inicializamos la DB al arrancar
 init_db()
 
 def send_whatsapp_message(phone_number, message):
