@@ -5,7 +5,12 @@ import requests
 import base64
 import time
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
+import hashlib
+import secrets
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from functools import wraps
 
 app = Flask(__name__)
 
@@ -27,6 +32,181 @@ grok_client = OpenAI(
 EVOLUTION_API_URL = os.environ.get('EVOLUTION_API_URL')
 EVOLUTION_API_KEY = os.environ.get('EVOLUTION_API_KEY')
 INSTANCE_NAME = os.environ.get('INSTANCE_NAME', 'my-whatsapp')
+
+# Configuración de Base de Datos PostgreSQL
+DATABASE_URL = os.environ.get('DATABASE_URL')
+
+# Google OAuth Config
+GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID')
+
+# ============================================
+# BASE DE DATOS Y AUTENTICACIÓN
+# ============================================
+
+def get_db_connection():
+    """Obtiene conexión a PostgreSQL"""
+    try:
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        return conn
+    except Exception as e:
+        print(f"❌ Error conectando a DB: {e}")
+        return None
+
+def init_db():
+    """Inicializa las tablas de usuarios si no existen"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        cur = conn.cursor()
+        
+        # Tabla de usuarios
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                email VARCHAR(255) UNIQUE NOT NULL,
+                password_hash VARCHAR(255),
+                name VARCHAR(255),
+                google_id VARCHAR(255) UNIQUE,
+                profile_picture TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_login TIMESTAMP,
+                is_active BOOLEAN DEFAULT TRUE
+            )
+        ''')
+        
+        # Tabla de tokens de sesión
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS auth_tokens (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                token VARCHAR(255) UNIQUE NOT NULL,
+                device_info TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP NOT NULL,
+                is_valid BOOLEAN DEFAULT TRUE
+            )
+        ''')
+        
+        # Índices para mejor rendimiento
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_tokens_token ON auth_tokens(token)')
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("✅ Base de datos inicializada correctamente")
+        return True
+    except Exception as e:
+        print(f"❌ Error inicializando DB: {e}")
+        return False
+
+def hash_password(password):
+    """Genera hash seguro de contraseña"""
+    salt = secrets.token_hex(16)
+    hash_obj = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000)
+    return f"{salt}${hash_obj.hex()}"
+
+def verify_password(password, password_hash):
+    """Verifica si la contraseña coincide con el hash"""
+    try:
+        salt, hash_value = password_hash.split('$')
+        hash_obj = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000)
+        return hash_obj.hex() == hash_value
+    except:
+        return False
+
+def generate_token():
+    """Genera un token de autenticación seguro"""
+    return secrets.token_urlsafe(32)
+
+def create_auth_token(user_id, device_info=None, days_valid=30):
+    """Crea un nuevo token de autenticación"""
+    conn = get_db_connection()
+    if not conn:
+        return None
+    
+    try:
+        cur = conn.cursor()
+        token = generate_token()
+        expires_at = datetime.now() + timedelta(days=days_valid)
+        
+        cur.execute('''
+            INSERT INTO auth_tokens (user_id, token, device_info, expires_at)
+            VALUES (%s, %s, %s, %s)
+            RETURNING token
+        ''', (user_id, token, device_info, expires_at))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        return token
+    except Exception as e:
+        print(f"❌ Error creando token: {e}")
+        return None
+
+def validate_token(token):
+    """Valida un token y retorna el usuario si es válido"""
+    conn = get_db_connection()
+    if not conn:
+        return None
+    
+    try:
+        cur = conn.cursor()
+        cur.execute('''
+            SELECT u.id, u.email, u.name, u.profile_picture, u.google_id
+            FROM auth_tokens t
+            JOIN users u ON t.user_id = u.id
+            WHERE t.token = %s 
+            AND t.is_valid = TRUE 
+            AND t.expires_at > NOW()
+            AND u.is_active = TRUE
+        ''', (token,))
+        
+        user = cur.fetchone()
+        cur.close()
+        conn.close()
+        return dict(user) if user else None
+    except Exception as e:
+        print(f"❌ Error validando token: {e}")
+        return None
+
+def require_auth(f):
+    """Decorador para requerir autenticación"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        
+        if not token:
+            return jsonify({"error": "Token requerido"}), 401
+        
+        user = validate_token(token)
+        if not user:
+            return jsonify({"error": "Token inválido o expirado"}), 401
+        
+        request.current_user = user
+        return f(*args, **kwargs)
+    return decorated
+
+def optional_auth(f):
+    """Decorador para autenticación opcional (permite usuarios no logueados)"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        
+        if token:
+            user = validate_token(token)
+            request.current_user = user
+        else:
+            request.current_user = None
+        
+        return f(*args, **kwargs)
+    return decorated
+
+# Inicializar base de datos al arrancar
+init_db()
 
 def send_whatsapp_message(phone_number, message):
     """Envía un mensaje de WhatsApp usando Evolution API"""
@@ -59,7 +239,7 @@ def send_welcome_message(phone_number):
                 messages=[
                     {
                         "role": "system",
-                        "content": "Eres NAVROS, un asistente virtual amable. Genera un saludo de bienvenida corto, natural y cálido (máximo 7 oraciones). No menciones productos ni vendas nada. Sólo saluda, da la bienvenida a NAVROS y pregunta en qué puedes ayudar. Varía el saludo para que no sea siempre igual. Puedes usar máximo 1 emoji."
+                        "content": "Eres NAVROS, un asistente virtual amable. Genera un saludo de bienvenida corto, natural y cálido (máximo 2 oraciones). No menciones productos ni vendas nada. Solo saluda y pregunta en qué puedes ayudar. Varía el saludo para que no sea siempre igual. Puedes usar máximo 1 emoji."
                     },
                     {
                         "role": "user",
@@ -728,6 +908,380 @@ def webhook():
 def health():
     """Endpoint para verificar que el servidor está funcionando"""
     return jsonify({"status": "healthy"}), 200
+
+# ============================================
+# API PARA APP MÓVIL
+# ============================================
+
+@app.route('/api/chat', methods=['POST'])
+@optional_auth
+def api_chat():
+    """Endpoint para la app móvil - recibe mensajes y responde"""
+    try:
+        data = request.json
+        message = data.get('message', '')
+        
+        # Usar ID del usuario autenticado o generar uno temporal
+        if request.current_user:
+            user_id = f"user_{request.current_user['id']}"
+            user_name = request.current_user.get('name', '')
+            print(f"📱 App - Mensaje de {user_name} ({user_id}): {message[:50]}...")
+        else:
+            user_id = data.get('user_id', 'guest_user')
+            print(f"📱 App - Mensaje de invitado ({user_id}): {message[:50]}...")
+        
+        if not message:
+            return jsonify({"error": "Mensaje vacío"}), 400
+        
+        # Detectar si es solicitud de imagen
+        es_solicitud_imagen = is_image_request(message)
+        
+        if es_solicitud_imagen:
+            print(f"🎨 App - Solicitud de imagen detectada")
+            
+            # Generar imagen
+            image_url = generate_image(message)
+            
+            if image_url:
+                return jsonify({
+                    "type": "image",
+                    "image_url": image_url,
+                    "caption": "¡Aquí está tu imagen! ✨"
+                }), 200
+            else:
+                return jsonify({
+                    "type": "text",
+                    "message": "Lo siento, no pude generar la imagen. ¿Podrías intentar con otra descripción?"
+                }), 200
+        
+        # Respuesta de texto normal
+        response = get_chatgpt_response(message, user_id, None)
+        
+        return jsonify({
+            "type": "text",
+            "message": response
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error en /api/chat: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/chat/image', methods=['POST'])
+@optional_auth
+def api_chat_image():
+    """Endpoint para enviar imágenes desde la app"""
+    try:
+        data = request.json
+        image_base64 = data.get('image')  # Base64 de la imagen
+        caption = data.get('caption', '¿Qué hay en esta imagen?')
+        
+        if not image_base64:
+            return jsonify({"error": "No se envió imagen"}), 400
+        
+        # Usar ID del usuario autenticado o generar uno temporal
+        if request.current_user:
+            user_id = f"user_{request.current_user['id']}"
+            print(f"📱 App - Imagen de usuario autenticado ({user_id})")
+        else:
+            user_id = data.get('user_id', 'guest_user')
+            print(f"📱 App - Imagen de invitado ({user_id})")
+        
+        # Crear URL de datos para OpenAI
+        image_url = f"data:image/jpeg;base64,{image_base64}"
+        
+        # Procesar con GPT-4o Vision
+        response = get_chatgpt_response(caption, user_id, image_url)
+        
+        return jsonify({
+            "type": "text",
+            "message": response
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error en /api/chat/image: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# ============================================
+# ENDPOINTS DE AUTENTICACIÓN
+# ============================================
+
+@app.route('/api/auth/register', methods=['POST'])
+def register():
+    """Registro de usuario con email y contraseña"""
+    try:
+        data = request.json
+        email = data.get('email', '').lower().strip()
+        password = data.get('password', '')
+        name = data.get('name', '').strip()
+        
+        # Validaciones
+        if not email or '@' not in email:
+            return jsonify({"error": "Email inválido"}), 400
+        
+        if len(password) < 8:
+            return jsonify({"error": "La contraseña debe tener al menos 8 caracteres"}), 400
+        
+        if not name:
+            return jsonify({"error": "El nombre es requerido"}), 400
+        
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({"error": "Error de conexión"}), 500
+        
+        cur = conn.cursor()
+        
+        # Verificar si el email ya existe
+        cur.execute('SELECT id FROM users WHERE email = %s', (email,))
+        if cur.fetchone():
+            cur.close()
+            conn.close()
+            return jsonify({"error": "Este email ya está registrado"}), 409
+        
+        # Crear usuario
+        password_hash = hash_password(password)
+        cur.execute('''
+            INSERT INTO users (email, password_hash, name)
+            VALUES (%s, %s, %s)
+            RETURNING id, email, name
+        ''', (email, password_hash, name))
+        
+        user = cur.fetchone()
+        conn.commit()
+        
+        # Crear token de sesión
+        token = create_auth_token(user['id'])
+        
+        cur.close()
+        conn.close()
+        
+        print(f"✅ Usuario registrado: {email}")
+        
+        return jsonify({
+            "success": True,
+            "message": "Cuenta creada exitosamente",
+            "user": {
+                "id": user['id'],
+                "email": user['email'],
+                "name": user['name']
+            },
+            "token": token
+        }), 201
+        
+    except Exception as e:
+        print(f"❌ Error en registro: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    """Login con email y contraseña"""
+    try:
+        data = request.json
+        email = data.get('email', '').lower().strip()
+        password = data.get('password', '')
+        
+        if not email or not password:
+            return jsonify({"error": "Email y contraseña requeridos"}), 400
+        
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({"error": "Error de conexión"}), 500
+        
+        cur = conn.cursor()
+        
+        # Buscar usuario
+        cur.execute('''
+            SELECT id, email, name, password_hash, profile_picture
+            FROM users WHERE email = %s AND is_active = TRUE
+        ''', (email,))
+        
+        user = cur.fetchone()
+        
+        if not user:
+            cur.close()
+            conn.close()
+            return jsonify({"error": "Credenciales incorrectas"}), 401
+        
+        # Verificar contraseña
+        if not user['password_hash'] or not verify_password(password, user['password_hash']):
+            cur.close()
+            conn.close()
+            return jsonify({"error": "Credenciales incorrectas"}), 401
+        
+        # Actualizar último login
+        cur.execute('UPDATE users SET last_login = NOW() WHERE id = %s', (user['id'],))
+        conn.commit()
+        
+        # Crear token
+        token = create_auth_token(user['id'])
+        
+        cur.close()
+        conn.close()
+        
+        print(f"✅ Login exitoso: {email}")
+        
+        return jsonify({
+            "success": True,
+            "user": {
+                "id": user['id'],
+                "email": user['email'],
+                "name": user['name'],
+                "profile_picture": user['profile_picture']
+            },
+            "token": token
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error en login: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/auth/google', methods=['POST'])
+def google_auth():
+    """Autenticación con Google"""
+    try:
+        data = request.json
+        google_token = data.get('id_token')
+        
+        if not google_token:
+            return jsonify({"error": "Token de Google requerido"}), 400
+        
+        # Verificar token con Google
+        google_url = f"https://oauth2.googleapis.com/tokeninfo?id_token={google_token}"
+        response = requests.get(google_url)
+        
+        if response.status_code != 200:
+            return jsonify({"error": "Token de Google inválido"}), 401
+        
+        google_data = response.json()
+        
+        # Verificar que el token sea para nuestra app
+        if GOOGLE_CLIENT_ID and google_data.get('aud') != GOOGLE_CLIENT_ID:
+            return jsonify({"error": "Token no válido para esta aplicación"}), 401
+        
+        google_id = google_data.get('sub')
+        email = google_data.get('email', '').lower()
+        name = google_data.get('name', '')
+        picture = google_data.get('picture', '')
+        
+        if not email:
+            return jsonify({"error": "No se pudo obtener el email de Google"}), 400
+        
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({"error": "Error de conexión"}), 500
+        
+        cur = conn.cursor()
+        
+        # Buscar usuario existente por google_id o email
+        cur.execute('''
+            SELECT id, email, name, profile_picture
+            FROM users WHERE google_id = %s OR email = %s
+        ''', (google_id, email))
+        
+        user = cur.fetchone()
+        
+        if user:
+            # Usuario existe, actualizar info de Google
+            cur.execute('''
+                UPDATE users 
+                SET google_id = %s, name = COALESCE(name, %s), 
+                    profile_picture = %s, last_login = NOW()
+                WHERE id = %s
+            ''', (google_id, name, picture, user['id']))
+            user_id = user['id']
+            is_new = False
+        else:
+            # Crear nuevo usuario
+            cur.execute('''
+                INSERT INTO users (email, name, google_id, profile_picture)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id
+            ''', (email, name, google_id, picture))
+            user_id = cur.fetchone()['id']
+            is_new = True
+        
+        conn.commit()
+        
+        # Crear token
+        token = create_auth_token(user_id)
+        
+        # Obtener datos actualizados del usuario
+        cur.execute('''
+            SELECT id, email, name, profile_picture
+            FROM users WHERE id = %s
+        ''', (user_id,))
+        user_data = cur.fetchone()
+        
+        cur.close()
+        conn.close()
+        
+        print(f"✅ Google auth exitoso: {email} (nuevo: {is_new})")
+        
+        return jsonify({
+            "success": True,
+            "is_new_user": is_new,
+            "user": {
+                "id": user_data['id'],
+                "email": user_data['email'],
+                "name": user_data['name'],
+                "profile_picture": user_data['profile_picture']
+            },
+            "token": token
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error en Google auth: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/auth/logout', methods=['POST'])
+@require_auth
+def logout():
+    """Cerrar sesión (invalidar token)"""
+    try:
+        token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        
+        conn = get_db_connection()
+        if conn:
+            cur = conn.cursor()
+            cur.execute('UPDATE auth_tokens SET is_valid = FALSE WHERE token = %s', (token,))
+            conn.commit()
+            cur.close()
+            conn.close()
+        
+        return jsonify({"success": True, "message": "Sesión cerrada"}), 200
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/auth/me', methods=['GET'])
+@require_auth
+def get_current_user():
+    """Obtener información del usuario actual"""
+    return jsonify({
+        "success": True,
+        "user": request.current_user
+    }), 200
+
+@app.route('/api/auth/validate', methods=['GET'])
+def validate_session():
+    """Validar si un token es válido"""
+    token = request.headers.get('Authorization', '').replace('Bearer ', '')
+    
+    if not token:
+        return jsonify({"valid": False}), 200
+    
+    user = validate_token(token)
+    
+    if user:
+        return jsonify({
+            "valid": True,
+            "user": user
+        }), 200
+    else:
+        return jsonify({"valid": False}), 200
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
