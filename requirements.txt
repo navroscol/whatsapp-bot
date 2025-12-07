@@ -1,6 +1,6 @@
-Flask==3.0.3
-gunicorn==23.0.0
-openai==1.51.0
-requests==2.32.3
-psycopg[binary]==3.2.3
-# Si tenías psycopg2 o psycopg2-binary, bórralas completamente
+flask==3.0.0
+openai==1.54.0
+httpx==0.27.0
+requests==2.31.0
+gunicorn==21.2.0
+psycopg[binary]==3.1.18
